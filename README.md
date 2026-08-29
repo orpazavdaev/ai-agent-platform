@@ -4,12 +4,10 @@ Production-oriented but intentionally simple AI software engineering agent. It w
 
 ## Current status
 
-Initial workspace scaffold only.
+Workspace scaffold plus:
 
-- npm workspaces configured
-- TypeScript (ESM) baselines in place
-- Package and app shells created
-- No agent loop, MCP tools, or API routes yet
+- `test-repository` sample app with an intentional pricing bug
+- MCP server repository path security utilities (`resolveRepoPath`)
 
 ## High-level architecture
 
@@ -35,13 +33,19 @@ npm install
 npm test
 ```
 
-Planned boundaries:
+## Security Boundaries
 
-- Frontend does not contain agent logic
-- API does not contain agent reasoning logic
-- Agent does not access the filesystem directly
-- Repository access goes through MCP tools
-- MCP server does not contain LLM reasoning logic
+Repository filesystem access is constrained by `packages/mcp-server` security utilities. The configured repository root is the only trust boundary for path resolution.
+
+Implemented behavior (`resolveRepoPath`):
+
+- Resolves the repository root to a real absolute directory path
+- Resolves the requested path with Node's path resolution (not string checks for `"../"` alone)
+- Follows existing symlink ancestors via `realpath` before the containment check
+- Accepts the path only when the final resolved location is inside the repository root
+- Rejects empty paths, null bytes, missing/non-directory roots, traversal escapes, and absolute paths that resolve outside the root
+
+MCP tools are not implemented yet; they will call `resolveRepoPath` before reading or searching files.
 
 ## Planned development phases
 
