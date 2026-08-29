@@ -18,7 +18,21 @@ apps/web            UI — no agent logic
 apps/api            Thin HTTP/SSE layer — no agent reasoning
 packages/agent      LLM + MCP client + explicit agent loop
 packages/mcp-server Repository tools only — no LLM logic
-test-repository     Fixture repo for investigation demos/tests
+test-repository     Standalone sample repo for agent investigation demos
+```
+
+## Test repository
+
+`test-repository/` is a small, standalone TypeScript project (`mini-checkout`). It is not part of the npm workspaces.
+
+CodePilot will use it as the target codebase when demonstrating or testing agent investigation: the agent should inspect source and tests there through MCP tools, not through the main monorepo packages.
+
+It ships with an intentional, deterministic pricing bug so a failing test suite gives the agent a concrete software engineering task.
+
+```bash
+cd test-repository
+npm install
+npm test
 ```
 
 Planned boundaries:

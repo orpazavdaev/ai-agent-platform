@@ -1,9 +1,14 @@
 {
-  "name": "codepilot-test-repository",
-  "version": "0.0.0",
+  "name": "mini-checkout",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test"
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
   }
 }
