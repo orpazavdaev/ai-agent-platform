@@ -8,6 +8,7 @@ Workspace scaffold plus:
 
 - `test-repository` sample app with an intentional pricing bug
 - MCP server repository path security utilities (`resolveRepoPath`)
+- Stdio MCP server process (`codepilot-mcp-server`) with no tools registered yet
 
 ## High-level architecture
 
@@ -15,9 +16,34 @@ Workspace scaffold plus:
 apps/web            UI — no agent logic
 apps/api            Thin HTTP/SSE layer — no agent reasoning
 packages/agent      LLM + MCP client + explicit agent loop
-packages/mcp-server Repository tools only — no LLM logic
+packages/mcp-server Repository MCP capabilities only — no LLM reasoning
 test-repository     Standalone sample repo for agent investigation demos
 ```
+
+## MCP server
+
+`packages/mcp-server` is the Model Context Protocol server for CodePilot.
+
+Responsibilities:
+
+- Expose repository capabilities to the agent through MCP (tools will be added later)
+- Enforce repository-root path security for those capabilities
+- Run as a local child process over stdio
+
+It does **not** contain LLM prompts, tool-selection logic, or any agent reasoning. Those belong in `packages/agent`. The MCP server only provides capabilities (tools/resources the host can call).
+
+### Why stdio for the MVP
+
+The agent launches the MCP server as a local subprocess and talks JSON-RPC on stdin/stdout. That matches the common local MCP hosting model, keeps deployment simple (no HTTP listener), and avoids multi-client transport complexity for a single-agent MVP.
+
+Operational logs go to **stderr** so stdout stays a clean protocol channel.
+
+```bash
+npm run build -w @codepilot/mcp-server
+npm start -w @codepilot/mcp-server
+```
+
+Startup is verified by the package test suite: a stdio MCP client connects, completes initialize, and confirms server name/version with an empty tool list.
 
 ## Test repository
 
