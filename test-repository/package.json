@@ -1,0 +1,9 @@
+{
+  "name": "codepilot-test-repository",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test"
+  }
+}
