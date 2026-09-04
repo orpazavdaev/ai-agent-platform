@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { McpServer } from "@modelcontextprotocol/server";
 import { PathSecurityError } from "./security/path-guard.js";
+import { registerReadFileTool } from "./tools/read-file.js";
 import { registerSearchCodeTool } from "./tools/search-code.js";
 
 export const SERVER_NAME = "codepilot-mcp-server";
@@ -51,5 +52,6 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
   );
 
   registerSearchCodeTool(server, repositoryRoot);
+  registerReadFileTool(server, repositoryRoot);
   return server;
 }

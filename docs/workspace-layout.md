@@ -6,7 +6,7 @@ Current repository layout for CodePilot Agent:
 apps/web            Next.js frontend (scaffold)
 apps/api            HTTP API (scaffold)
 packages/agent      Agent loop package (scaffold)
-packages/mcp-server Stdio MCP server (`search_code` + path security)
+packages/mcp-server Stdio MCP server (`search_code`, `read_file` + path security)
 test-repository     Standalone sample app (`mini-checkout`) for agent demos
 docs                Project documentation
 ```
@@ -17,9 +17,10 @@ flowchart LR
   mcp -->|REPO_ROOT only| repo["test-repository"]
 ```
 
-## MCP search approach
+## MCP repository tools
 
-`search_code` uses a plain recursive filesystem walk and substring match. No ripgrep/glob dependency: the target repos are small local trees, and path checks already go through `resolveRepoPath`.
+- `search_code`: plain recursive filesystem walk and substring match (no ripgrep dependency).
+- `read_file`: reads one file through `resolveRepoPath`, with a size cap and structured error codes.
 
 Install and run the sample separately:
 

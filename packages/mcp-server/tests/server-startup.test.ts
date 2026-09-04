@@ -29,7 +29,7 @@ describe("createServer", () => {
     }
   });
 
-  it("builds an MCP server with the CodePilot identity and search_code", () => {
+  it("builds an MCP server with the CodePilot identity and registered tools", () => {
     repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codepilot-server-"));
     fs.writeFileSync(path.join(repoRoot, "README.md"), "# fixture\n");
 
@@ -49,7 +49,7 @@ describe("stdio MCP server process", () => {
     }
   });
 
-  it("starts over stdio and registers search_code", async () => {
+  it("starts over stdio and registers repository tools", async () => {
     repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codepilot-stdio-"));
     fs.writeFileSync(
       path.join(repoRoot, "note.txt"),
@@ -87,15 +87,18 @@ describe("stdio MCP server process", () => {
     });
 
     const { tools } = await client.listTools();
-    expect(tools.map((tool) => tool.name)).toEqual(["search_code"]);
+    expect(tools.map((tool) => tool.name).sort()).toEqual([
+      "read_file",
+      "search_code",
+    ]);
 
-    const result = await client.callTool({
+    const searchResult = await client.callTool({
       name: "search_code",
       arguments: { query: "searchable token" },
     });
 
-    expect(result.isError).toBeFalsy();
-    expect(result.structuredContent).toMatchObject({
+    expect(searchResult.isError).toBeFalsy();
+    expect(searchResult.structuredContent).toMatchObject({
       truncated: false,
       matches: [
         {
@@ -104,6 +107,17 @@ describe("stdio MCP server process", () => {
           snippet: "hello searchable token",
         },
       ],
+    });
+
+    const readResult = await client.callTool({
+      name: "read_file",
+      arguments: { path: "note.txt" },
+    });
+
+    expect(readResult.isError).toBeFalsy();
+    expect(readResult.structuredContent).toMatchObject({
+      path: "note.txt",
+      content: "hello searchable token\n",
     });
 
     const stderr = Buffer.concat(stderrChunks).toString("utf8");

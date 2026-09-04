@@ -8,7 +8,7 @@ Workspace scaffold plus:
 
 - `test-repository` sample app with an intentional pricing bug
 - MCP server repository path security utilities (`resolveRepoPath`)
-- Stdio MCP server process (`codepilot-mcp-server`) with `search_code` registered
+- Stdio MCP server process (`codepilot-mcp-server`) with `search_code` and `read_file` registered
 
 ## High-level architecture
 
@@ -37,6 +37,7 @@ It does **not** contain LLM prompts, tool-selection logic, or any agent reasonin
 | Tool | Input | Description |
 |------|-------|-------------|
 | `search_code` | `{ query: string }` | Search text/code files under `REPO_ROOT`. Returns matching paths, line numbers, and concise snippets. Skips common generated directories and stays inside the repository root. |
+| `read_file` | `{ path: string }` | Read a file under `REPO_ROOT`. Uses path security, rejects directories/missing/outside/oversized paths, and returns structured errors. |
 
 ### Why stdio for the MVP
 
@@ -49,7 +50,7 @@ npm run build -w @codepilot/mcp-server
 REPO_ROOT=./test-repository npm start -w @codepilot/mcp-server
 ```
 
-Startup is verified by the package test suite: a stdio MCP client connects, completes initialize, and confirms server name/version with `search_code` registered.
+Startup is verified by the package test suite: a stdio MCP client connects, completes initialize, and confirms server name/version with `search_code` and `read_file` registered.
 
 ## Test repository
 
