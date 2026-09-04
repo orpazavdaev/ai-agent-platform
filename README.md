@@ -8,7 +8,7 @@ Workspace scaffold plus:
 
 - `test-repository` sample app with an intentional pricing bug
 - MCP server repository path security utilities (`resolveRepoPath`)
-- Stdio MCP server process (`codepilot-mcp-server`) with `search_code`, `read_file`, and `run_tests` registered
+- Stdio MCP server process (`codepilot-mcp-server`) with `search_code`, `read_file`, `run_tests`, and `get_diff` registered
 
 ## High-level architecture
 
@@ -39,6 +39,7 @@ It does **not** contain LLM prompts, tool-selection logic, or any agent reasonin
 | `search_code` | `{ query: string }` | Search text/code files under `REPO_ROOT`. Returns matching paths, line numbers, and concise snippets. Skips common generated directories and stays inside the repository root. |
 | `read_file` | `{ path: string }` | Read a file under `REPO_ROOT`. Uses path security, rejects directories/missing/outside/oversized paths, and returns structured errors. |
 | `run_tests` | `{}` | Run the fixed trusted test command from application config (`TEST_COMMAND`). Returns exit code, duration, and bounded stdout/stderr. The model cannot supply a shell command. |
+| `get_diff` | `{}` | Return the current `git diff` against `HEAD` under `REPO_ROOT` using a fixed git argv only. Reports empty diffs and non-git roots clearly; output size is capped. |
 
 ### Why stdio for the MVP
 
@@ -91,6 +92,8 @@ Instead:
 - Execution is bounded by timeout and captured stdout/stderr size caps
 
 The model may call `run_tests`, but it cannot choose *what* runs.
+
+`get_diff` follows the same rule for git: it only runs a fixed `git diff --no-ext-diff --no-color HEAD` in `REPO_ROOT`. There is no git-command input field.
 
 ## Planned development phases
 

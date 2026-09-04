@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { McpServer } from "@modelcontextprotocol/server";
 import { PathSecurityError } from "./security/path-guard.js";
+import { registerGetDiffTool } from "./tools/get-diff.js";
 import { registerReadFileTool } from "./tools/read-file.js";
 import {
   registerRunTestsTool,
@@ -65,5 +66,6 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
     command: testCommand,
     timeoutMs: options.testTimeoutMs,
   });
+  registerGetDiffTool(server, { repositoryRoot });
   return server;
 }
