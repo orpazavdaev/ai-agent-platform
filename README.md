@@ -87,13 +87,33 @@ Implemented behavior (`resolveRepoPath`):
 Instead:
 
 - The host configures one trusted argv via `TEST_COMMAND` (default `npm test`)
-- The tool parses that string into argv and runs it with `spawn(..., { shell: false })` in `REPO_ROOT`
+- The tool parses that string into argv and runs it in `REPO_ROOT` (no LLM-supplied command)
 - Shell metacharacters in the configured command are rejected
+- On Windows, `.cmd`/`.bat` trusted binaries use `shell: true` only because Node refuses to spawn them otherwise; argv remains fixed and metacharacter-checked
 - Execution is bounded by timeout and captured stdout/stderr size caps
 
 The model may call `run_tests`, but it cannot choose *what* runs.
 
 `get_diff` follows the same rule for git: it only runs a fixed `git diff --no-ext-diff --no-color HEAD` in `REPO_ROOT`. There is no git-command input field.
+
+## MCP Verification
+
+Independent stdio MCP client checks (after `npm run build -w @codepilot/mcp-server`):
+
+1. Server starts and completes the initialize handshake
+2. `tools/list` returns exactly `search_code`, `read_file`, `run_tests`, `get_diff`
+3. Happy-path calls succeed for all four tools against a fixture `REPO_ROOT`
+4. Invalid tool input is rejected
+5. Path traversal / absolute outside paths return structured `outside_repository` errors
+6. Missing files and directory reads return structured tool errors
+
+Package tests cover the same behaviors; run:
+
+```bash
+npm test -w @codepilot/mcp-server
+```
+
+Optional UI: MCP Inspector against `node packages/mcp-server/dist/main.js` with `REPO_ROOT` and `TEST_COMMAND` set.
 
 ## Planned development phases
 

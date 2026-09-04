@@ -142,6 +142,8 @@ export async function runTests(config: RunTestsConfig): Promise<RunTestsResult> 
 
   const [file, ...args] = config.command;
   const startedAt = Date.now();
+  const isWindowsBatch =
+    process.platform === "win32" && /\.(cmd|bat)$/i.test(file!);
 
   return await new Promise<RunTestsResult>((resolve, reject) => {
     let stdout = "";
@@ -153,7 +155,7 @@ export async function runTests(config: RunTestsConfig): Promise<RunTestsResult> 
     const child = spawn(file!, args, {
       cwd: config.repositoryRoot,
       env: process.env,
-      shell: false,
+      shell: isWindowsBatch,
       windowsHide: true,
     });
 

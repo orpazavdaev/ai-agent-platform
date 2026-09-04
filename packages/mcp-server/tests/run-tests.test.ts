@@ -139,4 +139,23 @@ describe("runTests", () => {
       }),
     ).rejects.toMatchObject({ code: "spawn_failed" });
   });
+
+  it("runs a Windows .cmd trusted command when present", async () => {
+    if (process.platform !== "win32") {
+      return;
+    }
+
+    const script = path.join(repoRoot, "ok.cmd");
+    fs.writeFileSync(script, "@echo pass-marker\r\n@exit /b 0\r\n");
+
+    const result = await runTests({
+      repositoryRoot: repoRoot,
+      command: [script],
+      timeoutMs: 10_000,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("pass-marker");
+  });
 });
