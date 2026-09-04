@@ -1,6 +1,6 @@
 # Agent design
 
-Current scope: in-memory agent state and types only. No agent loop and no LLM adapter yet.
+Current scope: in-memory agent state/types, MCP client, and Ollama LLM adapter. No agent loop yet.
 
 ## State model
 
@@ -42,3 +42,7 @@ stateDiagram-v2
 - `maxSteps` — hard cap (default `10`)
 
 State lives in process memory only. Helpers in `packages/agent/src/state.ts` mutate a single `AgentState` object; there is no database or external state library.
+
+## LLM adapter
+
+The agent depends on a small provider-neutral `LlmProvider` (`chat(messages, tools?)`). The only implemented backend is Ollama (`packages/agent/src/llm/ollama.ts`), configured with `OLLAMA_BASE_URL` and `OLLAMA_MODEL`. Tool definitions are forwarded when the local model supports tool calling; connection and missing-model failures map to explicit error types.

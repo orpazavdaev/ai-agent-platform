@@ -11,6 +11,7 @@ Workspace scaffold plus:
 - Stdio MCP server process (`codepilot-mcp-server`) with `search_code`, `read_file`, `run_tests`, and `get_diff` registered
 - Agent package MCP client (`McpClientSession`) that spawns the server over stdio and discovers tools dynamically
 - Agent in-memory state/types (`AgentState`, steps, tool calls/results, events, `FinalReport`)
+- Ollama LLM adapter behind a small `LlmProvider` interface (`OLLAMA_BASE_URL`, `OLLAMA_MODEL`)
 
 ## High-level architecture
 
@@ -117,25 +118,41 @@ npm test -w @codepilot/mcp-server
 
 Optional UI: MCP Inspector against `node packages/mcp-server/dist/main.js` with `REPO_ROOT` and `TEST_COMMAND` set.
 
+## Local model (Ollama)
+
+CodePilot uses **Ollama** as the local LLM backend for the agent package.
+
+- **Why Ollama:** it runs entirely on the developer machine over a simple HTTP API (`/api/chat`), which fits a portfolio MVP that should be easy to clone and try.
+- **Why no paid model API is required:** the agent talks to `OLLAMA_BASE_URL` (default `http://127.0.0.1:11434`) and `OLLAMA_MODEL`. There is no cloud API key in the default path.
+- **Trade-off:** quality and reliability depend on the model you pull and on local hardware (CPU/GPU/RAM). Smaller models may struggle with tool calling or multi-step investigation; larger models need more resources. This project does not claim strong autonomous performance on every machine.
+
+Ollama-specific code is isolated under `packages/agent/src/llm/ollama.ts`. The rest of the agent depends only on the small `LlmProvider` interface.
+
 ## Planned development phases
 
 1. Shared request/event/report schemas
 2. MCP server with four tools (`search_code`, `read_file`, `run_tests`, `get_diff`) and path security
 3. Agent loop with MCP client (max 10 steps), mocked LLM first
-4. Real LLM adapter and structured final report
+4. Structured final report wiring on top of the Ollama adapter
 5. API streaming endpoint wired to the agent
 6. Next.js UI for task input, activity stream, and report
 7. Hardening (timeouts, output caps) and runbook updates
 
 ## Setup
 
-Requirements: Node.js 20+
+Requirements: Node.js 20+, and Ollama installed locally if you want live LLM calls
 
 ```bash
 cp .env.example .env
 npm install
 npm run typecheck
 npm run build
+```
+
+Pull a model before live runs, for example:
+
+```bash
+ollama pull llama3.2
 ```
 
 ## Workspace packages
