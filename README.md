@@ -8,7 +8,7 @@ Workspace scaffold plus:
 
 - `test-repository` sample app with an intentional pricing bug
 - MCP server repository path security utilities (`resolveRepoPath`)
-- Stdio MCP server process (`codepilot-mcp-server`) with no tools registered yet
+- Stdio MCP server process (`codepilot-mcp-server`) with `search_code` registered
 
 ## High-level architecture
 
@@ -26,11 +26,17 @@ test-repository     Standalone sample repo for agent investigation demos
 
 Responsibilities:
 
-- Expose repository capabilities to the agent through MCP (tools will be added later)
+- Expose repository capabilities to the agent through MCP tools
 - Enforce repository-root path security for those capabilities
 - Run as a local child process over stdio
 
 It does **not** contain LLM prompts, tool-selection logic, or any agent reasoning. Those belong in `packages/agent`. The MCP server only provides capabilities (tools/resources the host can call).
+
+### MCP tools
+
+| Tool | Input | Description |
+|------|-------|-------------|
+| `search_code` | `{ query: string }` | Search text/code files under `REPO_ROOT`. Returns matching paths, line numbers, and concise snippets. Skips common generated directories and stays inside the repository root. |
 
 ### Why stdio for the MVP
 
@@ -40,10 +46,10 @@ Operational logs go to **stderr** so stdout stays a clean protocol channel.
 
 ```bash
 npm run build -w @codepilot/mcp-server
-npm start -w @codepilot/mcp-server
+REPO_ROOT=./test-repository npm start -w @codepilot/mcp-server
 ```
 
-Startup is verified by the package test suite: a stdio MCP client connects, completes initialize, and confirms server name/version with an empty tool list.
+Startup is verified by the package test suite: a stdio MCP client connects, completes initialize, and confirms server name/version with `search_code` registered.
 
 ## Test repository
 
@@ -70,8 +76,6 @@ Implemented behavior (`resolveRepoPath`):
 - Follows existing symlink ancestors via `realpath` before the containment check
 - Accepts the path only when the final resolved location is inside the repository root
 - Rejects empty paths, null bytes, missing/non-directory roots, traversal escapes, and absolute paths that resolve outside the root
-
-MCP tools are not implemented yet; they will call `resolveRepoPath` before reading or searching files.
 
 ## Planned development phases
 

@@ -1,8 +1,13 @@
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { describe, expect, it } from "vitest";
+import {
+  StdioClientTransport,
+  getDefaultEnvironment,
+} from "@modelcontextprotocol/client/stdio";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   SERVER_NAME,
   SERVER_VERSION,
@@ -16,8 +21,19 @@ const packageRoot = path.resolve(
 const mainEntry = path.join(packageRoot, "dist", "main.js");
 
 describe("createServer", () => {
-  it("builds an MCP server with the CodePilot identity", () => {
-    const server = createServer();
+  let repoRoot: string;
+
+  afterEach(() => {
+    if (repoRoot) {
+      fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("builds an MCP server with the CodePilot identity and search_code", () => {
+    repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codepilot-server-"));
+    fs.writeFileSync(path.join(repoRoot, "README.md"), "# fixture\n");
+
+    const server = createServer({ repositoryRoot: repoRoot });
     expect(server).toBeDefined();
     expect(SERVER_NAME).toBe("codepilot-mcp-server");
     expect(SERVER_VERSION).toBe("0.0.0");
@@ -25,11 +41,29 @@ describe("createServer", () => {
 });
 
 describe("stdio MCP server process", () => {
-  it("starts over stdio and completes the initialize handshake", async () => {
+  let repoRoot: string;
+
+  afterEach(() => {
+    if (repoRoot) {
+      fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("starts over stdio and registers search_code", async () => {
+    repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codepilot-stdio-"));
+    fs.writeFileSync(
+      path.join(repoRoot, "note.txt"),
+      "hello searchable token\n",
+    );
+
     const transport = new StdioClientTransport({
       command: process.execPath,
       args: [mainEntry],
       cwd: packageRoot,
+      env: {
+        ...getDefaultEnvironment(),
+        REPO_ROOT: repoRoot,
+      },
       stderr: "pipe",
     });
 
@@ -53,11 +87,29 @@ describe("stdio MCP server process", () => {
     });
 
     const { tools } = await client.listTools();
-    expect(tools).toEqual([]);
+    expect(tools.map((tool) => tool.name)).toEqual(["search_code"]);
+
+    const result = await client.callTool({
+      name: "search_code",
+      arguments: { query: "searchable token" },
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.structuredContent).toMatchObject({
+      truncated: false,
+      matches: [
+        {
+          path: "note.txt",
+          line: 1,
+          snippet: "hello searchable token",
+        },
+      ],
+    });
 
     const stderr = Buffer.concat(stderrChunks).toString("utf8");
     expect(stderr).toContain(`${SERVER_NAME} v${SERVER_VERSION}`);
     expect(stderr).toContain("starting on stdio");
+    expect(stderr).toContain(repoRoot);
 
     await client.close();
   });

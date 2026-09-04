@@ -3,13 +3,16 @@ import {
   SERVER_NAME,
   SERVER_VERSION,
   createServer,
+  resolveRepositoryRoot,
 } from "./create-server.js";
 
+const repositoryRoot = resolveRepositoryRoot();
+
 console.error(
-  `${SERVER_NAME} v${SERVER_VERSION} starting on stdio (no tools registered yet)`,
+  `${SERVER_NAME} v${SERVER_VERSION} starting on stdio (repo: ${repositoryRoot})`,
 );
 
-const handle = serveStdio(createServer, {
+const handle = serveStdio(() => createServer({ repositoryRoot }), {
   onerror: (error) => {
     console.error(`${SERVER_NAME} transport error:`, error);
   },
