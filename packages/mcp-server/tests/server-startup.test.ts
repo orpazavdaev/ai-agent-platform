@@ -89,6 +89,7 @@ describe("stdio MCP server process", () => {
     const { tools } = await client.listTools();
     expect(tools.map((tool) => tool.name).sort()).toEqual([
       "read_file",
+      "run_tests",
       "search_code",
     ]);
 

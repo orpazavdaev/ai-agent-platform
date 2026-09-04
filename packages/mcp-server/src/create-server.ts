@@ -3,6 +3,10 @@ import path from "node:path";
 import { McpServer } from "@modelcontextprotocol/server";
 import { PathSecurityError } from "./security/path-guard.js";
 import { registerReadFileTool } from "./tools/read-file.js";
+import {
+  registerRunTestsTool,
+  resolveTrustedTestCommand,
+} from "./tools/run-tests.js";
 import { registerSearchCodeTool } from "./tools/search-code.js";
 
 export const SERVER_NAME = "codepilot-mcp-server";
@@ -10,6 +14,8 @@ export const SERVER_VERSION = "0.0.0";
 
 export type CreateServerOptions = {
   repositoryRoot?: string;
+  testCommand?: string;
+  testTimeoutMs?: number;
 };
 
 export function resolveRepositoryRoot(explicitRoot?: string): string {
@@ -39,6 +45,7 @@ export function resolveRepositoryRoot(explicitRoot?: string): string {
 
 export function createServer(options: CreateServerOptions = {}): McpServer {
   const repositoryRoot = resolveRepositoryRoot(options.repositoryRoot);
+  const testCommand = resolveTrustedTestCommand(options.testCommand);
   const server = new McpServer(
     {
       name: SERVER_NAME,
@@ -53,5 +60,10 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
 
   registerSearchCodeTool(server, repositoryRoot);
   registerReadFileTool(server, repositoryRoot);
+  registerRunTestsTool(server, {
+    repositoryRoot,
+    command: testCommand,
+    timeoutMs: options.testTimeoutMs,
+  });
   return server;
 }

@@ -8,7 +8,7 @@ Workspace scaffold plus:
 
 - `test-repository` sample app with an intentional pricing bug
 - MCP server repository path security utilities (`resolveRepoPath`)
-- Stdio MCP server process (`codepilot-mcp-server`) with `search_code` and `read_file` registered
+- Stdio MCP server process (`codepilot-mcp-server`) with `search_code`, `read_file`, and `run_tests` registered
 
 ## High-level architecture
 
@@ -38,6 +38,7 @@ It does **not** contain LLM prompts, tool-selection logic, or any agent reasonin
 |------|-------|-------------|
 | `search_code` | `{ query: string }` | Search text/code files under `REPO_ROOT`. Returns matching paths, line numbers, and concise snippets. Skips common generated directories and stays inside the repository root. |
 | `read_file` | `{ path: string }` | Read a file under `REPO_ROOT`. Uses path security, rejects directories/missing/outside/oversized paths, and returns structured errors. |
+| `run_tests` | `{}` | Run the fixed trusted test command from application config (`TEST_COMMAND`). Returns exit code, duration, and bounded stdout/stderr. The model cannot supply a shell command. |
 
 ### Why stdio for the MVP
 
@@ -50,7 +51,7 @@ npm run build -w @codepilot/mcp-server
 REPO_ROOT=./test-repository npm start -w @codepilot/mcp-server
 ```
 
-Startup is verified by the package test suite: a stdio MCP client connects, completes initialize, and confirms server name/version with `search_code` and `read_file` registered.
+Startup is verified by the package test suite: a stdio MCP client connects, completes initialize, and confirms the registered repository tools.
 
 ## Test repository
 
@@ -77,6 +78,19 @@ Implemented behavior (`resolveRepoPath`):
 - Follows existing symlink ancestors via `realpath` before the containment check
 - Accepts the path only when the final resolved location is inside the repository root
 - Rejects empty paths, null bytes, missing/non-directory roots, traversal escapes, and absolute paths that resolve outside the root
+
+### Why `run_tests` uses a fixed command
+
+`run_tests` deliberately takes **no command input from the LLM**. An agent that can invent shell strings can turn “run the tests” into arbitrary remote code execution on the host.
+
+Instead:
+
+- The host configures one trusted argv via `TEST_COMMAND` (default `npm test`)
+- The tool parses that string into argv and runs it with `spawn(..., { shell: false })` in `REPO_ROOT`
+- Shell metacharacters in the configured command are rejected
+- Execution is bounded by timeout and captured stdout/stderr size caps
+
+The model may call `run_tests`, but it cannot choose *what* runs.
 
 ## Planned development phases
 
