@@ -9,6 +9,7 @@ Workspace scaffold plus:
 - `test-repository` sample app with an intentional pricing bug
 - MCP server repository path security utilities (`resolveRepoPath`)
 - Stdio MCP server process (`codepilot-mcp-server`) with `search_code`, `read_file`, `run_tests`, and `get_diff` registered
+- Agent package MCP client (`McpClientSession`) that spawns the server over stdio and discovers tools dynamically
 
 ## High-level architecture
 
