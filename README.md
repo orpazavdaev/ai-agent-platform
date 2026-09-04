@@ -10,6 +10,7 @@ Workspace scaffold plus:
 - MCP server repository path security utilities (`resolveRepoPath`)
 - Stdio MCP server process (`codepilot-mcp-server`) with `search_code`, `read_file`, `run_tests`, and `get_diff` registered
 - Agent package MCP client (`McpClientSession`) that spawns the server over stdio and discovers tools dynamically
+- Agent in-memory state/types (`AgentState`, steps, tool calls/results, events, `FinalReport`)
 
 ## High-level architecture
 
