@@ -9,10 +9,16 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "start": "node dist/index.js"
+    "test": "npm run build -w @codepilot/agent && npm run build && vitest run",
+    "start": "node dist/main.js"
+  },
+  "dependencies": {
+    "@codepilot/agent": "0.0.0",
+    "zod": "^4.2.0"
   },
   "devDependencies": {
     "@types/node": "^22.18.0",
-    "typescript": "^5.9.2"
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
   }
 }

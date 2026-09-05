@@ -4,7 +4,7 @@ Current repository layout for CodePilot Agent:
 
 ```
 apps/web            Next.js frontend (scaffold)
-apps/api            HTTP API (scaffold)
+apps/api            HTTP API (`POST /api/runs`, in-memory runs)
 packages/agent      MCP client + state + Ollama adapter + AgentRunner
 packages/mcp-server Stdio MCP server (four repo tools + path security)
 test-repository     Standalone sample app (`mini-checkout`) for agent demos

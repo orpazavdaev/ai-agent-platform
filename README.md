@@ -13,6 +13,7 @@ Workspace scaffold plus:
 - Agent in-memory state/types (`AgentState`, steps, tool calls/results, events, `FinalReport`)
 - Ollama LLM adapter behind a small `LlmProvider` interface (`OLLAMA_BASE_URL`, `OLLAMA_MODEL`)
 - `AgentRunner` loop (max 10 steps) that discovers MCP tools, calls them through MCP, and validates a final JSON report
+- API `POST /api/runs` that validates input, creates an in-memory run, starts `AgentRunner`, and returns `{ runId }` immediately
 
 ## High-level architecture
 
@@ -128,6 +129,42 @@ CodePilot uses **Ollama** as the local LLM backend for the agent package.
 - **Trade-off:** quality and reliability depend on the model you pull and on local hardware (CPU/GPU/RAM). Smaller models may struggle with tool calling or multi-step investigation; larger models need more resources. This project does not claim strong autonomous performance on every machine.
 
 Ollama-specific code is isolated under `packages/agent/src/llm/ollama.ts`. The rest of the agent depends only on the small `LlmProvider` interface.
+
+## API
+
+Thin HTTP layer in `apps/api`. It does not contain agent reasoning; it validates requests, tracks in-memory runs, and starts `AgentRunner`.
+
+### `POST /api/runs`
+
+Starts an investigation run.
+
+Request:
+
+```json
+{
+  "task": "Investigate the failing checkout discount test"
+}
+```
+
+Response (`202 Accepted`):
+
+```json
+{
+  "runId": "…"
+}
+```
+
+Notes:
+
+- Body is validated with Zod (`task` must be a non-empty string)
+- The run is stored in memory and `AgentRunner` starts in the background
+- The handler returns as soon as the run id exists; it does not wait for the final report
+- No database, auth, Redis, or queue
+
+```bash
+npm run build -w @codepilot/api
+API_PORT=3001 npm start -w @codepilot/api
+```
 
 ## Reliability & Guardrails
 

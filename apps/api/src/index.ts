@@ -1,5 +1,11 @@
-export function start(): void {
-  console.log("@codepilot/api scaffold — not implemented yet");
-}
-
-start();
+export {
+  createApiServer,
+  createDefaultAgentExecutor,
+  startApiServer,
+} from "./server.js";
+export type { ApiServerOptions } from "./server.js";
+export { createRunsService } from "./runs/service.js";
+export type { AgentExecutor, RunsService } from "./runs/service.js";
+export { InMemoryRunStore } from "./runs/store.js";
+export type { RunRecord, RunStatus } from "./runs/store.js";
+export { createRunBodySchema, handleCreateRun } from "./routes/create-run.js";
