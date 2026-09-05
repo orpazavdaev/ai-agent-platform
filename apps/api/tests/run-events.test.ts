@@ -176,6 +176,13 @@ describe("GET /api/runs/:runId/events", () => {
     expect(names.at(-1)).toBe("run_completed");
     expect(events[0]?.id).toBe("1");
     expect(events[0]?.data).toContain("run-live");
+
+    const completed = events.find((event) => event.event === "run_completed");
+    expect(completed).toBeDefined();
+    const completedPayload = JSON.parse(completed!.data) as {
+      payload: { finalReport?: { summary?: string } };
+    };
+    expect(completedPayload.payload.finalReport?.summary).toBe("done");
   });
 
   it("replays events for an already completed run and closes", async () => {
@@ -256,6 +263,44 @@ describe("GET /api/runs/:runId/events", () => {
     const names = events.map((event) => event.event);
     expect(names).toContain("tool_call_failed");
     expect(names.at(-1)).toBe("run_failed");
+
+    const failed = events.find((event) => event.event === "run_failed");
+    expect(failed).toBeDefined();
+    const failedPayload = JSON.parse(failed!.data) as {
+      payload: { error?: string };
+    };
+    expect(failedPayload.payload.error).toBe("investigation failed");
+  });
+
+  it("emits run_failed when the executor throws", async () => {
+    const server = createApiServer({
+      createId: () => "run-throw",
+      executor: {
+        async run() {
+          throw new Error("executor exploded");
+        },
+      },
+    });
+    servers.push(server);
+    const baseUrl = await listen(server);
+
+    await fetch(`${baseUrl}/api/runs`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ task: "throw task" }),
+    });
+
+    const response = await fetch(`${baseUrl}/api/runs/run-throw/events`);
+    const events = await readSseUntilTerminal(response);
+    expect(events.map((event) => event.event)).toEqual([
+      "run_started",
+      "run_failed",
+    ]);
+
+    const failedPayload = JSON.parse(events[1]!.data) as {
+      payload: { error?: string };
+    };
+    expect(failedPayload.payload.error).toBe("executor exploded");
   });
 
   it("returns 404 for unknown runs", async () => {

@@ -122,6 +122,40 @@ npm test -w @codepilot/mcp-server
 
 Optional UI: MCP Inspector against `node packages/mcp-server/dist/main.js` with `REPO_ROOT` and `TEST_COMMAND` set.
 
+## Testing strategy
+
+Tests prioritize behavior and safety over line coverage. They focus on boundaries that protect the host and keep runs deterministic.
+
+### MCP server (`npm test -w @codepilot/mcp-server`)
+
+- Input validation for tool arguments (missing/wrong types)
+- Repository boundary and path traversal (`resolveRepoPath`, `read_file`, symlink escapes, null bytes)
+- Fixed trusted commands only (`run_tests` / `get_diff` ignore model-supplied command argv)
+- Structured tool failure codes (`outside_repository`, `not_found`, timeouts, spawn failures)
+- Stdio smoke: initialize, tool list, happy-path calls
+
+### Agent (`npm test -w @codepilot/agent`)
+
+- Max step limit and clean failure without a report
+- Repeated identical tool-call detection (same name + args; key-order equivalence; different args allowed)
+- Structured `FinalReport` validation (required fields, no “I modified/fixed…” claims)
+- Invalid final model output → clean failure
+- Tool failures (MCP `isError`, timeouts, oversized results, transport throws) continue or fail cleanly as designed
+- MCP tool discovery failure → clean failure
+
+### API (`npm test -w @codepilot/api`)
+
+- `POST /api/runs` Zod/JSON validation (empty/missing/wrong-type task, malformed JSON)
+- Non-blocking run creation (`202` + `runId`)
+- SSE lifecycle: live stream, replay after completion, `run_failed`, 404, client disconnect
+- Terminal SSE payloads include `finalReport` or `error`
+
+### What is intentionally not chased
+
+- Arbitrary 100% line coverage
+- UI snapshot/pixel suites
+- End-to-end live Ollama quality (depends on local model/hardware)
+
 ## Local model (Ollama)
 
 CodePilot uses **Ollama** as the local LLM backend for the agent package.

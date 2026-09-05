@@ -82,6 +82,54 @@ describe("POST /api/runs", () => {
     expect(body.error).toMatch(/invalid request body/i);
   });
 
+  it("rejects malformed JSON bodies", async () => {
+    const server = createApiServer({
+      executor: {
+        async run() {
+          return createAgentState({ task: "unused" });
+        },
+      },
+    });
+    servers.push(server);
+    const baseUrl = await listen(server);
+
+    const response = await fetch(`${baseUrl}/api/runs`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{not-json",
+    });
+
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toMatch(/valid JSON/i);
+  });
+
+  it("rejects missing or non-string task fields", async () => {
+    const server = createApiServer({
+      executor: {
+        async run() {
+          return createAgentState({ task: "unused" });
+        },
+      },
+    });
+    servers.push(server);
+    const baseUrl = await listen(server);
+
+    const missing = await fetch(`${baseUrl}/api/runs`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    expect(missing.status).toBe(400);
+
+    const wrongType = await fetch(`${baseUrl}/api/runs`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ task: 42 }),
+    });
+    expect(wrongType.status).toBe(400);
+  });
+
   it("creates an in-memory run and returns runId immediately", async () => {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {

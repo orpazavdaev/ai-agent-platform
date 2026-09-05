@@ -105,4 +105,10 @@ describe("resolveRepoPath", () => {
       PathSecurityError,
     );
   });
+
+  it("rejects paths that contain a null byte", () => {
+    expect(() => resolveRepoPath(repoRoot, "src/main.ts\0.txt")).toThrow(
+      /null byte/,
+    );
+  });
 });

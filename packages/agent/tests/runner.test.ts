@@ -130,6 +130,15 @@ describe("guardrail helpers", () => {
     expect(DEFAULT_MAX_IDENTICAL_TOOL_CALLS).toBe(3);
   });
 
+  it("treats object key order as identical for tool-call fingerprints", () => {
+    const calls = [
+      { name: "search_code", arguments: { query: "a", limit: 1 } },
+    ];
+    expect(
+      countIdenticalToolCalls(calls, "search_code", { limit: 1, query: "a" }),
+    ).toBe(1);
+  });
+
   it("truncates oversized UTF-8 payloads", () => {
     const result = truncateUtf8("x".repeat(100), 32);
     expect(result.truncated).toBe(true);
@@ -180,6 +189,28 @@ describe("validateFinalReport", () => {
         {
           summary: "incomplete",
           rootCause: "missing other fields",
+        },
+        state,
+      ),
+    ).toBeNull();
+  });
+
+  it("rejects whitespace-only required strings and non-string list items", () => {
+    const state = createAgentState({ task: "investigate" });
+    expect(
+      validateFinalReport(
+        {
+          ...validReport,
+          summary: "   ",
+        },
+        state,
+      ),
+    ).toBeNull();
+    expect(
+      validateFinalReport(
+        {
+          ...validReport,
+          filesInspected: ["src/a.ts", 12],
         },
         state,
       ),
@@ -322,6 +353,67 @@ describe("AgentRunner", () => {
     expect(state.error).toMatch(/maximum of 3 steps/i);
   });
 
+  it("fails cleanly when the final answer is not a valid FinalReport", async () => {
+    const runner = new AgentRunner({
+      llm: createScriptedLlm([
+        { content: "I think the bug is in pricing.ts" },
+      ]),
+      mcp: createMockMcp({}),
+    });
+
+    const state = await runner.run("Investigate");
+
+    expect(isCleanFailureState(state)).toBe(true);
+    expect(state.finalReport).toBeNull();
+    expect(state.error).toMatch(/valid FinalReport/i);
+  });
+
+  it("fails cleanly when MCP tool discovery fails", async () => {
+    const runner = new AgentRunner({
+      llm: createScriptedLlm([{ content: JSON.stringify(validReport) }]),
+      mcp: createMockMcp({
+        listTools: async () => {
+          throw new Error("stdio disconnected");
+        },
+      }),
+    });
+
+    const state = await runner.run("Investigate");
+
+    expect(isCleanFailureState(state)).toBe(true);
+    expect(state.error).toMatch(/Failed to load MCP tools/i);
+    expect(state.error).toMatch(/stdio disconnected/);
+  });
+
+  it("records MCP callTool throws as tool failures and continues", async () => {
+    const runner = new AgentRunner({
+      llm: createScriptedLlm([
+        {
+          toolCalls: [
+            {
+              id: "throwing",
+              name: "search_code",
+              arguments: { query: "x" },
+            },
+          ],
+        },
+        { content: JSON.stringify(validReport) },
+      ]),
+      mcp: createMockMcp({
+        callTool: async () => {
+          throw new Error("transport reset");
+        },
+      }),
+    });
+
+    const state = await runner.run("Investigate");
+
+    expect(state.toolResults[0]?.isError).toBe(true);
+    expect(state.toolResults[0]?.content).toMatch(/transport reset/);
+    expect(state.status).toBe("completed");
+    expect(state.finalReport).not.toBeNull();
+  });
+
   it("enforces tool execution timeout", async () => {
     const runner = new AgentRunner({
       toolTimeoutMs: 30,
@@ -413,6 +505,43 @@ describe("AgentRunner", () => {
     expect(state.toolCalls).toHaveLength(3);
     expect(isCleanFailureState(state)).toBe(true);
     expect(state.error).toMatch(/repeated identical tool call/i);
+  });
+
+  it("allows repeated tool names when arguments differ", async () => {
+    const callTool = vi.fn(async () => ({
+      isError: false,
+      content: [{ type: "text", text: "ok" }],
+      structuredContent: { ok: true },
+    }));
+
+    const runner = new AgentRunner({
+      maxIdenticalToolCalls: 2,
+      llm: createScriptedLlm([
+        {
+          toolCalls: [
+            { id: "a1", name: "search_code", arguments: { query: "one" } },
+          ],
+        },
+        {
+          toolCalls: [
+            { id: "a2", name: "search_code", arguments: { query: "two" } },
+          ],
+        },
+        {
+          toolCalls: [
+            { id: "a3", name: "search_code", arguments: { query: "three" } },
+          ],
+        },
+        { content: JSON.stringify(validReport) },
+      ]),
+      mcp: createMockMcp({ callTool }),
+    });
+
+    const state = await runner.run("Different queries");
+
+    expect(callTool).toHaveBeenCalledTimes(3);
+    expect(state.status).toBe("completed");
+    expect(state.finalReport).not.toBeNull();
   });
 
   it("supports cancellation via AbortSignal", async () => {
