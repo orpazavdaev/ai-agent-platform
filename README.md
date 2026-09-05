@@ -1,251 +1,186 @@
 # CodePilot Agent
 
-Production-oriented but intentionally simple AI software engineering agent. It will investigate software engineering tasks with an LLM and MCP repository tools, stream activity to a Next.js UI, and return a structured final report.
+CodePilot is a local software-engineering investigation agent. A Next.js UI starts a run through a thin HTTP/SSE API; an explicit `AgentRunner` loop uses a local Ollama model and MCP repository tools to inspect a target codebase, then returns a structured final report. It does not modify repository files and is not an autonomous coding system.
 
-## Current status
+## Demo
 
-Workspace scaffold plus:
+The demo target is `test-repository` (`mini-checkout`), a small TypeScript app with an intentional pricing bug: volume discount fails at exactly `$100.00` because the threshold uses `>` instead of `>=`.
 
-- `test-repository` sample app with an intentional pricing bug
-- MCP server repository path security utilities (`resolveRepoPath`)
-- Stdio MCP server process (`codepilot-mcp-server`) with `search_code`, `read_file`, `run_tests`, and `get_diff` registered
-- Agent package MCP client (`McpClientSession`) that spawns the server over stdio and discovers tools dynamically
-- Agent in-memory state/types (`AgentState`, steps, tool calls/results, events, `FinalReport`)
-- Ollama LLM adapter behind a small `LlmProvider` interface (`OLLAMA_BASE_URL`, `OLLAMA_MODEL`)
-- `AgentRunner` loop (max 10 steps) that discovers MCP tools, calls them through MCP, and validates a final JSON report
-- API `POST /api/runs` that validates input, creates an in-memory run, starts `AgentRunner`, and returns `{ runId }` immediately
-- API `GET /api/runs/:runId/events` SSE stream for run activity
-- Next.js dashboard for task input, live timeline, tool calls, and final report
+A typical demo shows:
 
-## High-level architecture
+1. Starting a task from the dashboard
+2. Live SSE timeline of steps and tool calls (`search_code`, `read_file`, `run_tests`, optionally `get_diff`)
+3. A structured final report that separates investigated / identified / recommended / verified
+4. No file writes—recommendations only
 
+Investigation quality depends on the local Ollama model and hardware.
+
+## Why I Built This
+
+Software investigation is a loop: search code, read files, run tests, interpret evidence, and report findings. Wiring that loop naively (LLM + unrestricted shell) mixes reasoning with host risk. Treating it as a single chat completion also hides state, tool failures, and stopping conditions.
+
+An agent is useful here as a **bounded tool-calling loop with explicit state**: the model proposes the next inspection step; the runner executes only MCP tools; guardrails stop runaway loops; the outcome is a validated report rather than free-form prose. The engineering focus is boundaries (MCP, path security, fixed commands, SSE, in-memory runs)—not claiming the system can own a codebase.
+
+## Key Features
+
+- Explicit `AgentRunner` loop with in-memory `AgentState` (default max 10 steps)
+- Ollama-backed `LlmProvider` (`OLLAMA_BASE_URL`, `OLLAMA_MODEL`)
+- MCP client (`McpClientSession`) that spawns a stdio MCP server and discovers tools dynamically
+- MCP tools: `search_code`, `read_file`, `run_tests`, `get_diff`
+- Path security via `resolveRepoPath` (repository-root boundary)
+- Fixed trusted commands for tests and git diff (no LLM-supplied shell)
+- Structured `FinalReport` validation (investigation vocabulary; rejects “I modified/fixed…” claims)
+- API `POST /api/runs` → `202 { runId }` and background execution
+- SSE `GET /api/runs/:runId/events` for live progress
+- Next.js dashboard: task input, status, timeline, tool calls, final report, errors
+- In-process guardrails: step limit, tool timeout, result size cap, repeated identical tool-call detection, clean failure, optional `AbortSignal`
+
+## Architecture
+
+```mermaid
+flowchart TB
+  subgraph browser ["Browser"]
+    web["apps/web<br/>Next.js dashboard"]
+  end
+
+  subgraph apiProcess ["API process"]
+    api["apps/api<br/>HTTP + SSE"]
+    store["InMemoryRunStore"]
+    runner["AgentRunner"]
+    llm["OllamaProvider"]
+    mcpClient["McpClientSession"]
+    api --> store
+    api --> runner
+    runner --> llm
+    runner --> mcpClient
+  end
+
+  subgraph mcpProcess ["MCP child process"]
+    mcpServer["packages/mcp-server"]
+  end
+
+  repo["REPO_ROOT"]
+  ollama["Ollama"]
+
+  web -->|"POST /api/runs"| api
+  web -->|"SSE /api/runs/:id/events"| api
+  mcpClient -->|stdio| mcpServer
+  mcpServer --> repo
+  llm -->|HTTP| ollama
 ```
-apps/web            UI — no agent logic
-apps/api            Thin HTTP/SSE layer — no agent reasoning
-packages/agent      LLM + MCP client + explicit agent loop
-packages/mcp-server Repository MCP capabilities only — no LLM reasoning
-test-repository     Standalone sample repo for agent investigation demos
-```
 
-## MCP server
+| Layer | Package | Responsibility |
+|-------|---------|----------------|
+| UI | `apps/web` | Dashboard only; talks to the API |
+| API | `apps/api` | Validation, in-memory runs, SSE, starts the agent |
+| Agent | `packages/agent` | LLM + MCP client + runner loop |
+| MCP | `packages/mcp-server` | Repository tools + path/command policy |
+| Target | `test-repository` | Demo codebase (not a workspace package) |
 
-`packages/mcp-server` is the Model Context Protocol server for CodePilot.
+More detail: [`docs/architecture.md`](docs/architecture.md).
 
-Responsibilities:
+## How the Agent Works
 
-- Expose repository capabilities to the agent through MCP tools
-- Enforce repository-root path security for those capabilities
-- Run as a local child process over stdio
+`AgentRunner` owns one investigation run:
 
-It does **not** contain LLM prompts, tool-selection logic, or any agent reasoning. Those belong in `packages/agent`. The MCP server only provides capabilities (tools/resources the host can call).
+1. Create `AgentState`; append system prompt + user task
+2. Discover tools with `mcp.listTools()`
+3. Loop until completed or failed:
+   - Call `llm.chat` with messages and discovered tools
+   - If the model returns tool calls → execute each via `mcp.callTool`, record results, append tool messages, continue
+   - If the model returns no tool calls → parse/validate `FinalReport` JSON → complete or fail cleanly
+4. Stop early on max steps, repeated identical tool calls, LLM/MCP discovery failures, invalid final JSON, or abort
 
-### MCP tools
+Tool selection is model-driven. The runner does not hardcode the four tool names; it executes names requested through the MCP port. Success means a validated investigation report, not a patched repository.
+
+More detail: [`docs/agent-design.md`](docs/agent-design.md).
+
+## MCP Architecture
+
+- **MCP Client** (`McpClientSession` in `packages/agent`): spawns the server over stdio, lists tools, calls tools, closes the session
+- **MCP Server** (`packages/mcp-server`): registers repository capabilities only; no prompts or tool-selection policy
+- **Transport**: local child process, JSON-RPC on stdin/stdout; logs on stderr
+
+The agent reaches the repository only through MCP. Path security and command restrictions are enforced in the server.
+
+## Available Tools
 
 | Tool | Input | Description |
 |------|-------|-------------|
-| `search_code` | `{ query: string }` | Search text/code files under `REPO_ROOT`. Returns matching paths, line numbers, and concise snippets. Skips common generated directories and stays inside the repository root. |
-| `read_file` | `{ path: string }` | Read a file under `REPO_ROOT`. Uses path security, rejects directories/missing/outside/oversized paths, and returns structured errors. |
-| `run_tests` | `{}` | Run the fixed trusted test command from application config (`TEST_COMMAND`). Returns exit code, duration, and bounded stdout/stderr. The model cannot supply a shell command. |
-| `get_diff` | `{}` | Return the current `git diff` against `HEAD` under `REPO_ROOT` using a fixed git argv only. Reports empty diffs and non-git roots clearly; output size is capped. |
+| `search_code` | `{ query }` | Search under `REPO_ROOT`; returns paths, lines, snippets |
+| `read_file` | `{ path }` | Read one file under `REPO_ROOT`; structured errors |
+| `run_tests` | `{}` | Run host `TEST_COMMAND` only; bounded output |
+| `get_diff` | `{}` | Fixed `git diff --no-ext-diff --no-color HEAD` |
 
-### Why stdio for the MVP
-
-The agent launches the MCP server as a local subprocess and talks JSON-RPC on stdin/stdout. That matches the common local MCP hosting model, keeps deployment simple (no HTTP listener), and avoids multi-client transport complexity for a single-agent MVP.
-
-Operational logs go to **stderr** so stdout stays a clean protocol channel.
-
-```bash
-npm run build -w @codepilot/mcp-server
-REPO_ROOT=./test-repository npm start -w @codepilot/mcp-server
-```
-
-Startup is verified by the package test suite: a stdio MCP client connects, completes initialize, and confirms the registered repository tools.
-
-## Test repository
-
-`test-repository/` is a small, standalone TypeScript project (`mini-checkout`). It is not part of the npm workspaces.
-
-CodePilot will use it as the target codebase when demonstrating or testing agent investigation: the agent should inspect source and tests there through MCP tools, not through the main monorepo packages.
-
-It ships with an intentional, deterministic pricing bug so a failing test suite gives the agent a concrete software engineering task.
-
-```bash
-cd test-repository
-npm install
-npm test
-```
+There is no `write_file` tool.
 
 ## Security Boundaries
 
-Repository filesystem access is constrained by `packages/mcp-server` security utilities. The configured repository root is the only trust boundary for path resolution.
+**Repository paths** (`resolveRepoPath`):
 
-Implemented behavior (`resolveRepoPath`):
+- `REPO_ROOT` is the trust boundary
+- Paths are resolved with real filesystem semantics (not string `"../"` checks alone)
+- Symlink targets that leave the root are rejected
+- Null bytes, empty paths, and outside absolute paths are rejected
+- Filesystem tools return structured errors such as `outside_repository`
 
-- Resolves the repository root to a real absolute directory path
-- Resolves the requested path with Node's path resolution (not string checks for `"../"` alone)
-- Follows existing symlink ancestors via `realpath` before the containment check
-- Accepts the path only when the final resolved location is inside the repository root
-- Rejects empty paths, null bytes, missing/non-directory roots, traversal escapes, and absolute paths that resolve outside the root
+**Commands**:
 
-### Why `run_tests` uses a fixed command
+- `run_tests`: no LLM command input; only configured `TEST_COMMAND` argv; shell metacharacters rejected at parse time
+- `get_diff`: fixed git argv only
+- Timeouts and stdout/stderr size caps apply
 
-`run_tests` deliberately takes **no command input from the LLM**. An agent that can invent shell strings can turn “run the tests” into arbitrary remote code execution on the host.
+The model may request tools; it cannot choose arbitrary shell or git strings.
 
-Instead:
+## Reliability & Guardrails
 
-- The host configures one trusted argv via `TEST_COMMAND` (default `npm test`)
-- The tool parses that string into argv and runs it in `REPO_ROOT` (no LLM-supplied command)
-- Shell metacharacters in the configured command are rejected
-- On Windows, `.cmd`/`.bat` trusted binaries use `shell: true` only because Node refuses to spawn them otherwise; argv remains fixed and metacharacter-checked
-- Execution is bounded by timeout and captured stdout/stderr size caps
+In-process only (no Redis, queues, or distributed locks):
 
-The model may call `run_tests`, but it cannot choose *what* runs.
+| Guardrail | Default | Behavior |
+|-----------|---------|----------|
+| Max steps | 10 | Fail without a report when the cap is hit |
+| Tool timeout | 30s | Record as tool error; loop may continue |
+| Tool result size | 32 KiB | Truncate; treat truncation as error/preview |
+| Identical tool calls | 3 | Fail on repeated name + args fingerprint |
+| Clean failure | — | `failed` + error string + `finalReport=null` |
+| Cancellation | optional `AbortSignal` | Cooperative checks between steps/calls |
 
-`get_diff` follows the same rule for git: it only runs a fixed `git diff --no-ext-diff --no-color HEAD` in `REPO_ROOT`. There is no git-command input field.
+Limitations of these guards (cooperative timeout, possible truncation of useful evidence, blocking legitimate identical re-reads) are intentional MVP bounds.
 
-## MCP Verification
+## Testing
 
-Independent stdio MCP client checks (after `npm run build -w @codepilot/mcp-server`):
+Tests prioritize behavior and safety over line coverage.
 
-1. Server starts and completes the initialize handshake
-2. `tools/list` returns exactly `search_code`, `read_file`, `run_tests`, `get_diff`
-3. Happy-path calls succeed for all four tools against a fixture `REPO_ROOT`
-4. Invalid tool input is rejected
-5. Path traversal / absolute outside paths return structured `outside_repository` errors
-6. Missing files and directory reads return structured tool errors
+| Package | Focus |
+|---------|-------|
+| `@codepilot/mcp-server` | Input validation, path traversal, fixed commands, structured tool errors, stdio smoke |
+| `@codepilot/agent` | Max steps, repeated tool calls, `FinalReport` validation, tool failures, clean failure paths |
+| `@codepilot/api` | Request validation, non-blocking run create, SSE lifecycle and terminal payloads |
 
-Package tests cover the same behaviors; run:
+Not chased: arbitrary 100% coverage, UI pixel suites, live Ollama quality as CI.
 
 ```bash
 npm test -w @codepilot/mcp-server
+npm test -w @codepilot/agent
+npm test -w @codepilot/api
 ```
 
-Optional UI: MCP Inspector against `node packages/mcp-server/dist/main.js` with `REPO_ROOT` and `TEST_COMMAND` set.
+## Design Decisions & Trade-offs
 
-## Testing strategy
+Important choices already in the codebase:
 
-Tests prioritize behavior and safety over line coverage. They focus on boundaries that protect the host and keep runs deterministic.
+- MCP (not direct FS/shell from the agent) for a typed capability boundary
+- Stdio MCP for a local single-agent MVP
+- One explicit `AgentRunner` (no multi-agent system, no agent framework)
+- Ollama as the default local model backend
+- No database; in-memory agent + run/SSE state
+- SSE instead of WebSockets for one-way progress
+- No `write_file`; investigation and recommendation only
+- Restricted `run_tests` / `get_diff` commands
 
-### MCP server (`npm test -w @codepilot/mcp-server`)
+Full write-ups: [`docs/decisions.md`](docs/decisions.md).
 
-- Input validation for tool arguments (missing/wrong types)
-- Repository boundary and path traversal (`resolveRepoPath`, `read_file`, symlink escapes, null bytes)
-- Fixed trusted commands only (`run_tests` / `get_diff` ignore model-supplied command argv)
-- Structured tool failure codes (`outside_repository`, `not_found`, timeouts, spawn failures)
-- Stdio smoke: initialize, tool list, happy-path calls
-
-### Agent (`npm test -w @codepilot/agent`)
-
-- Max step limit and clean failure without a report
-- Repeated identical tool-call detection (same name + args; key-order equivalence; different args allowed)
-- Structured `FinalReport` validation (required fields, no “I modified/fixed…” claims)
-- Invalid final model output → clean failure
-- Tool failures (MCP `isError`, timeouts, oversized results, transport throws) continue or fail cleanly as designed
-- MCP tool discovery failure → clean failure
-
-### API (`npm test -w @codepilot/api`)
-
-- `POST /api/runs` Zod/JSON validation (empty/missing/wrong-type task, malformed JSON)
-- Non-blocking run creation (`202` + `runId`)
-- SSE lifecycle: live stream, replay after completion, `run_failed`, 404, client disconnect
-- Terminal SSE payloads include `finalReport` or `error`
-
-### What is intentionally not chased
-
-- Arbitrary 100% line coverage
-- UI snapshot/pixel suites
-- End-to-end live Ollama quality (depends on local model/hardware)
-
-## Local model (Ollama)
-
-CodePilot uses **Ollama** as the local LLM backend for the agent package.
-
-- **Why Ollama:** it runs entirely on the developer machine over a simple HTTP API (`/api/chat`), which fits a portfolio MVP that should be easy to clone and try.
-- **Why no paid model API is required:** the agent talks to `OLLAMA_BASE_URL` (default `http://127.0.0.1:11434`) and `OLLAMA_MODEL`. There is no cloud API key in the default path.
-- **Trade-off:** quality and reliability depend on the model you pull and on local hardware (CPU/GPU/RAM). Smaller models may struggle with tool calling or multi-step investigation; larger models need more resources. This project does not claim strong autonomous performance on every machine.
-
-Ollama-specific code is isolated under `packages/agent/src/llm/ollama.ts`. The rest of the agent depends only on the small `LlmProvider` interface.
-
-## API
-
-Thin HTTP layer in `apps/api`. It does not contain agent reasoning; it validates requests, tracks in-memory runs, and starts `AgentRunner`.
-
-### `POST /api/runs`
-
-Starts an investigation run.
-
-Request:
-
-```json
-{
-  "task": "Investigate the failing checkout discount test"
-}
-```
-
-Response (`202 Accepted`):
-
-```json
-{
-  "runId": "…"
-}
-```
-
-Notes:
-
-- Body is validated with Zod (`task` must be a non-empty string)
-- The run is stored in memory and `AgentRunner` starts in the background
-- The handler returns as soon as the run id exists; it does not wait for the final report
-- No database, auth, Redis, or queue
-
-```bash
-npm run build -w @codepilot/api
-API_PORT=3001 npm start -w @codepilot/api
-```
-
-### `GET /api/runs/:runId/events`
-
-Server-Sent Events stream for one run.
-
-Event names:
-
-- `run_started`
-- `step_started`
-- `tool_call_started`
-- `tool_call_completed`
-- `tool_call_failed`
-- `run_completed`
-- `run_failed`
-
-Notes:
-
-- Correct SSE framing (`id`, `event`, `data`, blank line)
-- Connecting after completion replays buffered events and closes
-- Failures emit `run_failed` (and `tool_call_failed` when a tool result is an error)
-- Client disconnect unsubscribes the in-memory listener
-- No WebSockets, Redis, or message broker
-
-## Web UI
-
-Single-page Next.js dashboard in `apps/web`.
-
-Shows:
-
-- task input and start control
-- run status
-- live SSE timeline
-- tool call list
-- final report
-- error state
-
-The browser only talks to the API (`POST /api/runs`, `GET /api/runs/:runId/events`). It does not contain agent reasoning or MCP logic.
-
-```bash
-npm run dev -w @codepilot/web
-```
-
-Set `NEXT_PUBLIC_API_URL` (default `http://localhost:3001`) and run the API separately.
-
-## Example run
+## Example Run
 
 Task:
 
@@ -256,11 +191,11 @@ Investigate why the volume discount fails at exactly $100.00
 Typical tool activity:
 
 1. `search_code` for discount / pricing
-2. `read_file` on `src/pricing.ts` and the failing test
+2. `read_file` on pricing source and the failing test
 3. `run_tests` to capture the failure
 4. Final JSON report (no code changes)
 
-Example final report shape:
+Example report shape:
 
 ```json
 {
@@ -294,68 +229,32 @@ Example final report shape:
 }
 ```
 
-Status vocabulary:
+## Limitations
 
-- **Investigated** — what was looked at
-- **Identified** — facts supported by tool evidence
-- **Recommended** — suggested fixes that were not applied
-- **Verified** — outcomes confirmed by tools (for example test results)
+- Local MVP: single API process, in-memory runs/events (lost on process exit)
+- No authentication, database, Redis, queue, or WebSockets
+- No repository mutation tools; cannot apply or verify its own patches in-repo
+- Investigation quality depends on the Ollama model and machine resources
+- Max 10 steps can stop a slow but useful investigation
+- Tool timeouts are cooperative around the await; MCP child work is not OS-killed
+- Truncated tool results can hide evidence the model needed
+- Identical-call detector can block legitimate repeated reads of the same path/query
+- Not production-hardened (no multi-tenant isolation, durable audit log, or SLA claims)
 
-The agent never claims to have modified repository files.
+## Future Improvements
 
-## Reliability & Guardrails
+Not implemented. Possible directions only:
 
-`AgentRunner` uses small in-process guardrails only. No Redis, queues, circuit breakers, distributed locks, or databases.
+- Durable run history (database or file-backed store)
+- Optional hosted LLM provider behind the same `LlmProvider` interface
+- Stronger tool-timeout handling (process-level cancellation)
+- Human-approved mutation tools with review/diff gates
+- Multi-subscriber durable event log if more than one consumer is required
+- Broader allowlisted command palette still host-configured (not free-form shell)
 
-### Maximum 10 steps
+## Local Setup
 
-- **Problem:** A confused local model can request tools forever.
-- **Solution:** Default `maxSteps` is 10. When the limit is hit without a valid `FinalReport`, the run ends in a clean `failed` state.
-- **Limitation:** Hard stops may cut off a slow but productive investigation; the limit is intentionally small for MVP demos.
-
-### Tool execution timeout
-
-- **Problem:** An MCP tool (especially `run_tests`) can hang and block the agent process.
-- **Solution:** Each tool call is wrapped in a timeout (default 30s). Timeouts become tool error results the model can observe.
-- **Limitation:** The underlying child process may keep running after the agent moves on; this is cooperative timeout around the await, not OS-level kill of MCP subprocesses.
-
-### Maximum tool result size
-
-- **Problem:** Huge stdout/search payloads can blow up conversation context and memory.
-- **Solution:** Tool result text is truncated to a byte cap (default 32 KiB) before it is stored in state/messages.
-- **Limitation:** Truncation can drop the exact evidence the model needed; the agent only sees a capped preview.
-
-### Repeated identical tool-call detection
-
-- **Problem:** Models often retry the same failing or unhelpful tool call with identical arguments.
-- **Solution:** Identical tool fingerprints (`name` + stable JSON args) are counted. Exceeding the limit (default 3) fails the run cleanly.
-- **Limitation:** Legitimate repeated reads of the same path/query are blocked too; the detector is intentionally simple and local to one run.
-
-### Clean failure state
-
-- **Problem:** Partial failures can leave callers unsure whether a report exists or the run is still active.
-- **Solution:** Failures go through `failAgent`: `status=failed`, non-empty `error`, `finalReport=null`, and `error`/`done` events.
-- **Limitation:** Clean failure does not roll back earlier tool side effects (for example tests that already ran inside MCP).
-
-### Cancellation
-
-- **Problem:** A UI/API caller may need to stop a long investigation.
-- **Solution:** `run(task, { signal })` accepts an `AbortSignal` and checks it between steps/tool calls.
-- **Limitation:** Cancellation is cooperative. In-flight MCP work is not forcibly killed; abort is detected at the next await boundary.
-
-## Planned development phases
-
-1. Shared request/event/report schemas
-2. MCP server with four tools (`search_code`, `read_file`, `run_tests`, `get_diff`) and path security
-3. Agent loop with MCP client (max 10 steps), mocked LLM first
-4. Structured final report wiring on top of the Ollama adapter
-5. API streaming endpoint wired to the agent
-6. Next.js UI for task input, activity stream, and report
-7. Hardening (timeouts, output caps) and runbook updates
-
-## Setup
-
-Requirements: Node.js 20+, and Ollama installed locally if you want live LLM calls
+Requirements: Node.js 20+, npm, Git, and Ollama for live LLM runs.
 
 ```bash
 cp .env.example .env
@@ -364,17 +263,60 @@ npm run typecheck
 npm run build
 ```
 
-Pull a model before live runs, for example:
+Prepare the demo repository:
+
+```bash
+cd test-repository
+npm install
+npm test
+cd ..
+```
+
+Pull a model (example):
 
 ```bash
 ollama pull llama3.2
 ```
 
-## Workspace packages
+Run API and UI (separate terminals):
 
-| Path | Package | Role |
-|------|---------|------|
-| `apps/web` | `@codepilot/web` | Next.js frontend |
-| `apps/api` | `@codepilot/api` | API server |
-| `packages/agent` | `@codepilot/agent` | Agent runtime |
-| `packages/mcp-server` | `@codepilot/mcp-server` | MCP tool server |
+```bash
+API_PORT=3001 npm start -w @codepilot/api
+npm run dev -w @codepilot/web
+```
+
+Defaults from `.env.example`:
+
+| Variable | Purpose |
+|----------|---------|
+| `OLLAMA_BASE_URL` / `OLLAMA_MODEL` | Local model |
+| `REPO_ROOT` | Target repository root |
+| `TEST_COMMAND` | Trusted test argv |
+| `API_PORT` | API listen port (`3001`) |
+| `NEXT_PUBLIC_API_URL` | Web → API base |
+| `WEB_ORIGIN` | CORS origin for the UI |
+
+Open the UI (default `http://localhost:3000`) and start a task against the API.
+
+## Project Structure
+
+```text
+apps/web              Next.js investigation dashboard
+apps/api              HTTP API + SSE + in-memory runs
+packages/agent        AgentRunner, state, Ollama adapter, MCP client
+packages/mcp-server   Stdio MCP server, tools, path security
+test-repository       Standalone demo app with intentional bug
+docs/                 architecture, agent-design, decisions, layout
+```
+
+## Tech Stack
+
+- Node.js 20+ / npm workspaces
+- TypeScript
+- Next.js / React (`apps/web`)
+- Node HTTP server + SSE (`apps/api`)
+- Zod (request validation)
+- Vitest (package tests)
+- Model Context Protocol (official client/server SDKs)
+- Ollama HTTP chat API (local LLM)
+- Git (fixed `get_diff` argv only)
