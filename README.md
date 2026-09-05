@@ -211,6 +211,64 @@ npm run dev -w @codepilot/web
 
 Set `NEXT_PUBLIC_API_URL` (default `http://localhost:3001`) and run the API separately.
 
+## Example run
+
+Task:
+
+```text
+Investigate why the volume discount fails at exactly $100.00
+```
+
+Typical tool activity:
+
+1. `search_code` for discount / pricing
+2. `read_file` on `src/pricing.ts` and the failing test
+3. `run_tests` to capture the failure
+4. Final JSON report (no code changes)
+
+Example final report shape:
+
+```json
+{
+  "summary": "Volume discount fails at exactly $100 because the threshold uses a strict greater-than comparison.",
+  "rootCause": "applyVolumeDiscount uses `subtotal > 100` instead of `subtotal >= 100`, so $100.00 never qualifies.",
+  "filesInspected": ["src/pricing.ts", "tests/pricing.test.ts"],
+  "testsExecuted": ["npm test"],
+  "testResult": "Failed: volume discount at exactly $100.00 expectation not met.",
+  "confidence": "high",
+  "uncertainty": [
+    "Did not inspect unrelated checkout modules.",
+    "No production logs were available."
+  ],
+  "investigated": [
+    "Searched for discount and pricing logic.",
+    "Read pricing implementation and failing test.",
+    "Ran the repository test suite."
+  ],
+  "identified": [
+    "Failing test asserts a discount at exactly $100.00.",
+    "Implementation compares with `>` rather than `>=`."
+  ],
+  "recommended": [
+    "Change the threshold comparison in applyVolumeDiscount from `>` to `>=`.",
+    "Re-run npm test after the change."
+  ],
+  "verified": [
+    "Observed the failing test output from run_tests.",
+    "Confirmed the comparison operator in the inspected source file."
+  ]
+}
+```
+
+Status vocabulary:
+
+- **Investigated** — what was looked at
+- **Identified** — facts supported by tool evidence
+- **Recommended** — suggested fixes that were not applied
+- **Verified** — outcomes confirmed by tools (for example test results)
+
+The agent never claims to have modified repository files.
+
 ## Reliability & Guardrails
 
 `AgentRunner` uses small in-process guardrails only. No Redis, queues, circuit breakers, distributed locks, or databases.

@@ -61,14 +61,25 @@ const SYSTEM_PROMPT = [
   "You are CodePilot, a software engineering investigation agent.",
   "Use the available MCP tools to inspect the repository.",
   "Do not invent filesystem or shell access; only use tools.",
+  "You cannot modify, create, delete, or patch repository files. Never claim that you changed code.",
+  "Separate claims carefully:",
+  "- investigated: what you looked at (files, searches, diffs).",
+  "- identified: facts you found from tool evidence.",
+  "- recommended: suggested fixes or next steps that were NOT applied.",
+  "- verified: only outcomes confirmed by tool evidence (for example failing/passing tests).",
   "When you have enough evidence, respond with ONLY a JSON object matching:",
   JSON.stringify({
     summary: "string",
-    findings: ["string"],
-    stepsTaken: 0,
-    toolsUsed: ["string"],
-    conclusion: "string",
-    limitations: ["string"],
+    rootCause: "string",
+    filesInspected: ["string"],
+    testsExecuted: ["string"],
+    testResult: "string",
+    confidence: "high|medium|low",
+    uncertainty: ["string"],
+    investigated: ["string"],
+    identified: ["string"],
+    recommended: ["string"],
+    verified: ["string"],
   }),
 ].join("\n");
 
@@ -147,43 +158,76 @@ function isStringArray(value: unknown): value is string[] {
   );
 }
 
+function requireNonEmptyString(value: unknown): string | null {
+  if (typeof value !== "string" || value.trim() === "") {
+    return null;
+  }
+  return value.trim();
+}
+
+function claimsCodeModification(text: string): boolean {
+  return /\b(i|we)\s+(modified|changed|edited|patched|fixed|updated|wrote|created|deleted)\b/i.test(
+    text,
+  );
+}
+
 export function validateFinalReport(
   value: unknown,
-  state: AgentState,
+  _state: AgentState,
 ): FinalReport | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return null;
   }
 
   const record = value as Record<string, unknown>;
-  if (typeof record.summary !== "string" || record.summary.trim() === "") {
-    return null;
-  }
-  if (typeof record.conclusion !== "string" || record.conclusion.trim() === "") {
-    return null;
-  }
-  if (!isStringArray(record.findings) || !isStringArray(record.limitations)) {
+  const summary = requireNonEmptyString(record.summary);
+  const rootCause = requireNonEmptyString(record.rootCause);
+  const testResult = requireNonEmptyString(record.testResult);
+  const confidence = requireNonEmptyString(record.confidence);
+
+  if (!summary || !rootCause || !testResult || !confidence) {
     return null;
   }
 
-  const toolsUsed = isStringArray(record.toolsUsed)
-    ? record.toolsUsed
-    : [...new Set(state.toolCalls.map((call) => call.name))];
+  if (
+    !isStringArray(record.filesInspected) ||
+    !isStringArray(record.testsExecuted) ||
+    !isStringArray(record.uncertainty) ||
+    !isStringArray(record.investigated) ||
+    !isStringArray(record.identified) ||
+    !isStringArray(record.recommended) ||
+    !isStringArray(record.verified)
+  ) {
+    return null;
+  }
 
-  const stepsTaken =
-    typeof record.stepsTaken === "number" &&
-    Number.isInteger(record.stepsTaken) &&
-    record.stepsTaken >= 0
-      ? record.stepsTaken
-      : state.currentStep;
+  const narrative = [
+    summary,
+    rootCause,
+    testResult,
+    ...record.investigated,
+    ...record.identified,
+    ...record.recommended,
+    ...record.verified,
+    ...record.uncertainty,
+  ].join("\n");
+
+  if (claimsCodeModification(narrative)) {
+    return null;
+  }
 
   return {
-    summary: record.summary.trim(),
-    findings: [...record.findings],
-    stepsTaken,
-    toolsUsed,
-    conclusion: record.conclusion.trim(),
-    limitations: [...record.limitations],
+    summary,
+    rootCause,
+    filesInspected: [...record.filesInspected],
+    testsExecuted: [...record.testsExecuted],
+    testResult,
+    confidence,
+    uncertainty: [...record.uncertainty],
+    investigated: [...record.investigated],
+    identified: [...record.identified],
+    recommended: [...record.recommended],
+    verified: [...record.verified],
   };
 }
 

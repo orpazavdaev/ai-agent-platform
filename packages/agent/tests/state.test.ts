@@ -120,16 +120,26 @@ describe("agent state behavior", () => {
     endStep(state);
 
     setFinalReport(state, {
-      summary: "Threshold comparison bug",
-      findings: ["applyVolumeDiscount uses > instead of >="],
-      stepsTaken: state.currentStep,
-      toolsUsed: ["run_tests"],
-      conclusion: "Change the comparison to >=",
-      limitations: ["Did not patch the file"],
+      summary:
+        "Volume discount fails at exactly $100 because of a threshold comparison bug.",
+      rootCause:
+        "applyVolumeDiscount uses `>` instead of `>=` at the $100 threshold.",
+      filesInspected: ["src/pricing.ts", "tests/pricing.test.ts"],
+      testsExecuted: ["npm test"],
+      testResult: "Failed at exactly $100.00",
+      confidence: "high",
+      uncertainty: ["Did not patch the file"],
+      investigated: ["Read pricing source and tests", "Ran npm test"],
+      identified: ["Threshold comparison uses >"],
+      recommended: ["Change the comparison to >="],
+      verified: ["Failing test output observed"],
     });
 
     expect(state.status).toBe("completed");
-    expect(state.finalReport?.summary).toBe("Threshold comparison bug");
+    expect(state.finalReport?.summary).toContain("Volume discount");
+    expect(state.finalReport?.recommended).toEqual([
+      "Change the comparison to >=",
+    ]);
     expect(state.events.some((event) => event.type === "report")).toBe(true);
     expect(state.events.at(-1)?.type).toBe("done");
   });

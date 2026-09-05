@@ -1,8 +1,26 @@
 import http from "node:http";
 import { afterEach, describe, expect, it } from "vitest";
-import { createAgentState, setFinalReport } from "@codepilot/agent";
+import {
+  createAgentState,
+  setFinalReport,
+  type FinalReport,
+} from "@codepilot/agent";
 import { createApiServer } from "../src/server.js";
 import { InMemoryRunStore } from "../src/runs/store.js";
+
+const sampleReport = (summary: string): FinalReport => ({
+  summary,
+  rootCause: "example root cause",
+  filesInspected: [],
+  testsExecuted: [],
+  testResult: "not run",
+  confidence: "medium",
+  uncertainty: [],
+  investigated: [],
+  identified: [],
+  recommended: [],
+  verified: [],
+});
 
 async function listen(server: http.Server): Promise<string> {
   await new Promise<void>((resolve) => {
@@ -78,14 +96,7 @@ describe("POST /api/runs", () => {
         async run(task: string) {
           await gate;
           const state = createAgentState({ task });
-          setFinalReport(state, {
-            summary: "done",
-            findings: [],
-            stepsTaken: 1,
-            toolsUsed: [],
-            conclusion: "ok",
-            limitations: [],
-          });
+          setFinalReport(state, sampleReport("done"));
           return state;
         },
       },
@@ -128,14 +139,7 @@ describe("POST /api/runs", () => {
           started.push(task);
           await gate;
           const state = createAgentState({ task });
-          setFinalReport(state, {
-            summary: "later",
-            findings: [],
-            stepsTaken: 0,
-            toolsUsed: [],
-            conclusion: "ok",
-            limitations: [],
-          });
+          setFinalReport(state, sampleReport("later"));
           return state;
         },
       },

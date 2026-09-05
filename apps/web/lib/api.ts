@@ -24,11 +24,16 @@ export type ToolCallItem = {
 
 export type FinalReportView = {
   summary: string;
-  findings: string[];
-  stepsTaken: number;
-  toolsUsed: string[];
-  conclusion: string;
-  limitations: string[];
+  rootCause: string;
+  filesInspected: string[];
+  testsExecuted: string[];
+  testResult: string;
+  confidence: string;
+  uncertainty: string[];
+  investigated: string[];
+  identified: string[];
+  recommended: string[];
+  verified: string[];
 };
 
 export type StreamEventPayload = {
@@ -143,34 +148,56 @@ export function summarizeEvent(type: string, payload: unknown): string {
   }
 }
 
+function asStringList(value: unknown): string[] | null {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+  if (!value.every((item) => typeof item === "string")) {
+    return null;
+  }
+  return value;
+}
+
 export function asFinalReport(value: unknown): FinalReportView | null {
   if (!value || typeof value !== "object") {
     return null;
   }
   const record = value as Record<string, unknown>;
+  const filesInspected = asStringList(record.filesInspected);
+  const testsExecuted = asStringList(record.testsExecuted);
+  const uncertainty = asStringList(record.uncertainty);
+  const investigated = asStringList(record.investigated);
+  const identified = asStringList(record.identified);
+  const recommended = asStringList(record.recommended);
+  const verified = asStringList(record.verified);
+
   if (
     typeof record.summary !== "string" ||
-    typeof record.conclusion !== "string" ||
-    !Array.isArray(record.findings) ||
-    !Array.isArray(record.limitations) ||
-    !Array.isArray(record.toolsUsed) ||
-    typeof record.stepsTaken !== "number"
+    typeof record.rootCause !== "string" ||
+    typeof record.testResult !== "string" ||
+    typeof record.confidence !== "string" ||
+    !filesInspected ||
+    !testsExecuted ||
+    !uncertainty ||
+    !investigated ||
+    !identified ||
+    !recommended ||
+    !verified
   ) {
     return null;
   }
 
   return {
     summary: record.summary,
-    conclusion: record.conclusion,
-    findings: record.findings.filter(
-      (item): item is string => typeof item === "string",
-    ),
-    limitations: record.limitations.filter(
-      (item): item is string => typeof item === "string",
-    ),
-    toolsUsed: record.toolsUsed.filter(
-      (item): item is string => typeof item === "string",
-    ),
-    stepsTaken: record.stepsTaken,
+    rootCause: record.rootCause,
+    filesInspected,
+    testsExecuted,
+    testResult: record.testResult,
+    confidence: record.confidence,
+    uncertainty,
+    investigated,
+    identified,
+    recommended,
+    verified,
   };
 }

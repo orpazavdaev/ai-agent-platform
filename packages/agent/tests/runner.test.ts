@@ -11,7 +11,8 @@ import {
 import { LlmModelError } from "../src/llm/types.js";
 import type { LlmProvider } from "../src/llm/types.js";
 import type { AgentMcpPort } from "../src/runner.js";
-import { AgentRunner, isCleanFailureState } from "../src/runner.js";
+import { AgentRunner, isCleanFailureState, validateFinalReport } from "../src/runner.js";
+import { createAgentState } from "../src/state.js";
 
 function createScriptedLlm(
   responses: Array<
@@ -82,12 +83,38 @@ function createMockMcp(handlers: {
 }
 
 const validReport = {
-  summary: "Found threshold bug",
-  findings: ["applyVolumeDiscount uses >"],
-  stepsTaken: 1,
-  toolsUsed: ["search_code"],
-  conclusion: "Change comparison to >=",
-  limitations: ["Did not edit files"],
+  summary:
+    "Volume discount fails at exactly $100 because the threshold uses a strict greater-than comparison.",
+  rootCause:
+    "applyVolumeDiscount uses `subtotal > 100` instead of `subtotal >= 100`, so $100.00 never qualifies.",
+  filesInspected: [
+    "src/pricing.ts",
+    "tests/pricing.test.ts",
+  ],
+  testsExecuted: ["npm test"],
+  testResult: "Failed: volume discount at exactly $100.00 expectation not met.",
+  confidence: "high",
+  uncertainty: [
+    "Did not inspect unrelated checkout modules.",
+    "No production logs were available.",
+  ],
+  investigated: [
+    "Searched for discount and pricing logic.",
+    "Read pricing implementation and failing test.",
+    "Ran the repository test suite.",
+  ],
+  identified: [
+    "Failing test asserts a discount at exactly $100.00.",
+    "Implementation compares with `>` rather than `>=`.",
+  ],
+  recommended: [
+    "Change the threshold comparison in applyVolumeDiscount from `>` to `>=`.",
+    "Re-run npm test after the change.",
+  ],
+  verified: [
+    "Observed the failing test output from run_tests.",
+    "Confirmed the comparison operator in the inspected source file.",
+  ],
 };
 
 describe("guardrail helpers", () => {
@@ -127,6 +154,39 @@ describe("guardrail helpers", () => {
   });
 });
 
+describe("validateFinalReport", () => {
+  it("accepts a complete investigation report", () => {
+    const state = createAgentState({ task: "investigate" });
+    expect(validateFinalReport(validReport, state)).toEqual(validReport);
+  });
+
+  it("rejects reports that claim code was modified", () => {
+    const state = createAgentState({ task: "investigate" });
+    expect(
+      validateFinalReport(
+        {
+          ...validReport,
+          recommended: ["I fixed the comparison operator."],
+        },
+        state,
+      ),
+    ).toBeNull();
+  });
+
+  it("rejects incomplete reports", () => {
+    const state = createAgentState({ task: "investigate" });
+    expect(
+      validateFinalReport(
+        {
+          summary: "incomplete",
+          rootCause: "missing other fields",
+        },
+        state,
+      ),
+    ).toBeNull();
+  });
+});
+
 describe("AgentRunner", () => {
   it("runs a tool-call loop then finishes with a validated report", async () => {
     const callTool = vi.fn(async () => ({
@@ -163,7 +223,7 @@ describe("AgentRunner", () => {
     expect(state.status).toBe("completed");
     expect(state.toolCalls).toHaveLength(1);
     expect(state.toolResults).toHaveLength(1);
-    expect(state.finalReport?.summary).toBe("Found threshold bug");
+    expect(state.finalReport?.summary).toBe(validReport.summary);
     expect(events).toContain("tool_call");
     expect(events).toContain("tool_result");
     expect(events).toContain("report");
@@ -182,7 +242,9 @@ describe("AgentRunner", () => {
     expect(callTool).not.toHaveBeenCalled();
     expect(state.status).toBe("completed");
     expect(state.currentStep).toBe(1);
-    expect(state.finalReport?.conclusion).toContain(">=");
+    expect(state.finalReport?.rootCause).toContain(">=");
+    expect(state.finalReport?.recommended[0]).toContain(">=");
+    expect(state.finalReport?.verified.length).toBeGreaterThan(0);
   });
 
   it("records tool errors and continues the loop", async () => {

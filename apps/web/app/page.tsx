@@ -284,35 +284,80 @@ export default function DashboardPage() {
           </p>
         ) : (
           <div className="report">
+            <div className="report-meta">
+              <span>Confidence: {report.confidence}</span>
+            </div>
             <div>
               <h3>Summary</h3>
               <p>{report.summary}</p>
             </div>
             <div>
-              <h3>Conclusion</h3>
-              <p>{report.conclusion}</p>
+              <h3>Root cause</h3>
+              <p>{report.rootCause}</p>
             </div>
             <div className="report-grid">
               <div>
-                <h3>Findings</h3>
+                <h3>Files inspected</h3>
                 <ul>
-                  {report.findings.map((item) => (
+                  {report.filesInspected.map((item) => (
                     <li key={item}>{item}</li>
                   ))}
                 </ul>
               </div>
               <div>
-                <h3>Limitations</h3>
+                <h3>Tests executed</h3>
                 <ul>
-                  {report.limitations.map((item) => (
+                  {report.testsExecuted.map((item) => (
                     <li key={item}>{item}</li>
                   ))}
                 </ul>
               </div>
             </div>
-            <div className="report-meta">
-              <span>Steps: {report.stepsTaken}</span>
-              <span>Tools: {report.toolsUsed.join(", ") || "none"}</span>
+            <div>
+              <h3>Test result</h3>
+              <p>{report.testResult}</p>
+            </div>
+            <div className="report-grid report-status-grid">
+              <div>
+                <h3>Investigated</h3>
+                <ul>
+                  {report.investigated.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              </div>
+              <div>
+                <h3>Identified</h3>
+                <ul>
+                  {report.identified.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              </div>
+              <div>
+                <h3>Recommended</h3>
+                <ul>
+                  {report.recommended.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              </div>
+              <div>
+                <h3>Verified</h3>
+                <ul>
+                  {report.verified.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+            <div>
+              <h3>Uncertainty / limitations</h3>
+              <ul>
+                {report.uncertainty.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
             </div>
           </div>
         )}

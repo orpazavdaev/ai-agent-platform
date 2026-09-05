@@ -47,11 +47,16 @@ export type AgentStep = {
 
 export type FinalReport = {
   summary: string;
-  findings: string[];
-  stepsTaken: number;
-  toolsUsed: string[];
-  conclusion: string;
-  limitations: string[];
+  rootCause: string;
+  filesInspected: string[];
+  testsExecuted: string[];
+  testResult: string;
+  confidence: string;
+  uncertainty: string[];
+  investigated: string[];
+  identified: string[];
+  recommended: string[];
+  verified: string[];
 };
 
 export type AgentEventType =
@@ -284,11 +289,16 @@ export function setFinalReport(
 ): AgentState {
   state.finalReport = {
     summary: report.summary,
-    findings: [...report.findings],
-    stepsTaken: report.stepsTaken,
-    toolsUsed: [...report.toolsUsed],
-    conclusion: report.conclusion,
-    limitations: [...report.limitations],
+    rootCause: report.rootCause,
+    filesInspected: [...report.filesInspected],
+    testsExecuted: [...report.testsExecuted],
+    testResult: report.testResult,
+    confidence: report.confidence,
+    uncertainty: [...report.uncertainty],
+    investigated: [...report.investigated],
+    identified: [...report.identified],
+    recommended: [...report.recommended],
+    verified: [...report.verified],
   };
   state.status = "completed";
   delete state.error;

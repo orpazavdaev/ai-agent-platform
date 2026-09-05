@@ -8,9 +8,24 @@ import {
   recordToolResult,
   setFinalReport,
   type AgentEvent,
+  type FinalReport,
 } from "@codepilot/agent";
 import { createApiServer } from "../src/server.js";
 import { InMemoryRunStore } from "../src/runs/store.js";
+
+const sampleReport = (summary: string): FinalReport => ({
+  summary,
+  rootCause: "example root cause",
+  filesInspected: [],
+  testsExecuted: [],
+  testResult: "not run",
+  confidence: "medium",
+  uncertainty: [],
+  investigated: [],
+  identified: [],
+  recommended: [],
+  verified: [],
+});
 
 async function listen(server: http.Server): Promise<string> {
   await new Promise<void>((resolve) => {
@@ -149,14 +164,7 @@ describe("GET /api/runs/:runId/events", () => {
       content: "{}",
     });
     emit(state.events.find((event) => event.type === "tool_result")!);
-    setFinalReport(state, {
-      summary: "done",
-      findings: [],
-      stepsTaken: 1,
-      toolsUsed: ["search_code"],
-      conclusion: "ok",
-      limitations: [],
-    });
+    setFinalReport(state, sampleReport("done"));
     finish(state);
 
     const events = await streamPromise;
@@ -179,14 +187,7 @@ describe("GET /api/runs/:runId/events", () => {
         async run(task) {
           const state = createAgentState({ task });
           beginStep(state);
-          setFinalReport(state, {
-            summary: "already done",
-            findings: [],
-            stepsTaken: 1,
-            toolsUsed: [],
-            conclusion: "ok",
-            limitations: [],
-          });
+          setFinalReport(state, sampleReport("already done"));
           return state;
         },
       },
@@ -303,14 +304,7 @@ describe("GET /api/runs/:runId/events", () => {
     finish(
       (() => {
         const state = createAgentState({ task: "disconnect" });
-        setFinalReport(state, {
-          summary: "done",
-          findings: [],
-          stepsTaken: 0,
-          toolsUsed: [],
-          conclusion: "ok",
-          limitations: [],
-        });
+        setFinalReport(state, sampleReport("done"));
         return state;
       })(),
     );
