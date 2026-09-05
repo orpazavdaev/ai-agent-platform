@@ -1,39 +1,290 @@
 # Architecture
 
-CodePilot separates UI, API, agent reasoning, and repository access.
+CodePilot is a local investigation stack: a Next.js UI starts runs through a thin HTTP/SSE API; the API runs `AgentRunner` in-process; the agent reasons with Ollama and reaches the target repository only through an MCP client that spawns a stdio MCP server.
+
+Facts below match the current implementation in `apps/*` and `packages/*`.
+
+## System architecture
+
+```mermaid
+flowchart TB
+  subgraph browser ["Browser"]
+    web["apps/web<br/>Next.js dashboard"]
+  end
+
+  subgraph apiProcess ["API process"]
+    api["apps/api<br/>HTTP + SSE"]
+    store["InMemoryRunStore"]
+    runner["AgentRunner"]
+    llm["OllamaProvider"]
+    mcpClient["McpClientSession"]
+    api --> store
+    api --> runner
+    runner --> llm
+    runner --> mcpClient
+  end
+
+  subgraph mcpProcess ["MCP child process"]
+    mcpServer["packages/mcp-server<br/>stdio MCP server"]
+  end
+
+  repo["REPO_ROOT<br/>e.g. test-repository"]
+  ollama["Ollama HTTP API"]
+
+  web -->|"POST /api/runs"| api
+  web -->|"GET /api/runs/:runId/events SSE"| api
+  mcpClient -->|"stdio JSON-RPC"| mcpServer
+  mcpServer --> repo
+  llm -->|"HTTP /api/chat"| ollama
+```
+
+| Path | Package | Role |
+|------|---------|------|
+| `apps/web` | `@codepilot/web` | Single-page dashboard: task input, status, timeline, tool calls, final report, errors |
+| `apps/api` | `@codepilot/api` | Request validation, in-memory runs, SSE stream, starts `AgentRunner` |
+| `packages/agent` | `@codepilot/agent` | `AgentRunner`, in-memory `AgentState`, Ollama adapter, `McpClientSession` |
+| `packages/mcp-server` | `@codepilot/mcp-server` | Repository tools over stdio; path security; no LLM reasoning |
+| `test-repository/` | `mini-checkout` | Standalone sample target repo (not an npm workspace package) |
+
+## Component responsibilities
+
+### Web (`apps/web`)
+
+- Calls `POST /api/runs` and subscribes with `EventSource` to `GET /api/runs/:runId/events`
+- Renders run UI from SSE payloads
+- Does **not** import `@codepilot/agent`, spawn MCP, or call Ollama
+
+### API (`apps/api`)
+
+- Validates `{ task }` with Zod
+- Creates an in-memory run and returns `202 { runId }` immediately
+- Runs the agent in the background; maps selected agent events to SSE
+- Applies CORS for `WEB_ORIGIN` so the browser can call the API
+- Does **not** contain investigation reasoning or repository I/O
+
+Default executor wiring (`createDefaultAgentExecutor`):
+
+1. Connect `McpClientSession` by spawning `node packages/mcp-server/dist/main.js` (or `MCP_SERVER_ENTRY`) over stdio
+2. Pass `REPO_ROOT` and `TEST_COMMAND` into the child env
+3. Construct `AgentRunner` with `createLlmProviderFromEnv()` and the MCP session
+4. Close the MCP session when the run finishes
+
+### Agent (`packages/agent`)
+
+- Owns the investigation loop (`AgentRunner`)
+- Talks to Ollama through `LlmProvider` / `OllamaProvider`
+- Discovers and calls tools only through `AgentMcpPort` (`listTools`, `callTool`)
+- Validates a structured `FinalReport` before completing
+- Enforces in-process guardrails (max steps, tool timeout, result size, repeated identical calls, clean failure, optional `AbortSignal`)
+
+### MCP client (`McpClientSession` in `packages/agent`)
+
+- Spawns/connects to the MCP server with `StdioClientTransport`
+- Lists tools dynamically (tool names are not hardcoded in the runner)
+- Forwards `tools/call` and returns results to the runner
+- Closes the session cleanly
+
+### MCP server (`packages/mcp-server`)
+
+- Exposes repository capabilities only:
+
+| Tool | Input | Behavior |
+|------|-------|----------|
+| `search_code` | `{ query }` | Search under `REPO_ROOT` |
+| `read_file` | `{ path }` | Read a file under `REPO_ROOT` |
+| `run_tests` | `{}` | Run host-configured `TEST_COMMAND` only |
+| `get_diff` | `{}` | Run fixed `git diff --no-ext-diff --no-color HEAD` only |
+
+- Enforces path security for filesystem tools
+- Does **not** contain prompts, tool-selection policy, or LLM calls
+
+### Repository (`REPO_ROOT`)
+
+- Trust boundary for path resolution and command cwd
+- Default demo target is `test-repository` (intentional failing pricing tests)
+
+## Data flow
+
+```mermaid
+sequenceDiagram
+  participant UI as Web UI
+  participant API as API
+  participant Store as InMemoryRunStore
+  participant Runner as AgentRunner
+  participant Ollama as Ollama
+  participant MCP as McpClientSession
+  participant Server as MCP Server
+  participant Repo as REPO_ROOT
+
+  UI->>API: POST /api/runs { task }
+  API->>Store: create(runId, task)
+  Store-->>API: run_started buffered
+  API-->>UI: 202 { runId }
+
+  UI->>API: GET /api/runs/:runId/events
+  API-->>UI: SSE run_started
+
+  API->>MCP: connect (spawn stdio)
+  MCP->>Server: initialize + tools/list
+  Server-->>MCP: tool definitions
+  MCP-->>Runner: discovered tools
+
+  loop until report, failure, or maxSteps
+    Runner->>Ollama: chat(messages, tools)
+    Ollama-->>Runner: assistant / tool calls
+    opt tool call
+      Runner->>MCP: callTool(name, args)
+      MCP->>Server: tools/call
+      Server->>Repo: search / read / tests / diff
+      Repo-->>Server: result or structured error
+      Server-->>MCP: tool result
+      MCP-->>Runner: ToolCallResult
+      Runner->>Store: mapped SSE tool events
+      API-->>UI: tool_call_* events
+    end
+  end
+
+  alt valid FinalReport
+    Runner->>Store: complete + finalReport
+    API-->>UI: run_completed
+  else clean failure / executor error
+    Runner->>Store: fail + error
+    API-->>UI: run_failed
+  end
+
+  API->>MCP: close
+```
+
+### Final report shape
+
+On successful completion, SSE `run_completed` carries `payload.finalReport` with:
+
+`summary`, `rootCause`, `filesInspected`, `testsExecuted`, `testResult`, `confidence`, `uncertainty`, `investigated`, `identified`, `recommended`, `verified`
+
+The agent must not claim it modified repository files; there is no write tool.
+
+## Agent → MCP Client → MCP Server flow
 
 ```mermaid
 flowchart LR
-  ui["Web UI"] -->|POST /api/runs| api["API"]
-  ui -->|GET /api/runs/:id/events SSE| api
-  api --> agent["AgentRunner"]
-  agent --> mcpClient["MCP Client"]
-  mcpClient -->|stdio| mcpServer["MCP Server"]
-  mcpServer --> repo["Repository"]
+  runner["AgentRunner"] -->|"listTools / callTool"| client["McpClientSession"]
+  client -->|"stdio JSON-RPC"| server["codepilot-mcp-server"]
+  server -->|"resolveRepoPath + tools"| repo["REPO_ROOT"]
 ```
 
-| Layer | Package | Responsibility |
-|-------|---------|----------------|
-| API | `apps/api` | Validate requests, in-memory runs, SSE activity stream |
-| Agent | `packages/agent` | LLM reasoning and tool use via `AgentRunner` (MCP client + Ollama) |
-| MCP Client | `packages/agent` (`McpClientSession`) | Spawn/connect to the local MCP server, discover tools dynamically, call tools, close cleanly |
-| MCP Server | `packages/mcp-server` | Repository capabilities only (`search_code`, `read_file`, `run_tests`, `get_diff`) |
-| Repository | `REPO_ROOT` / `test-repository` | Target codebase under path-security constraints |
+Constraints enforced by the current code:
 
-The agent must not hardcode repository tool names. It discovers the live tool list from MCP after connect.
+- Repository access from the agent goes through MCP only
+- Tool names come from `tools/list`, not a hardcoded allowlist in the runner
+- `run_tests` and `get_diff` accept empty input schemas; model-supplied command/git argv is not used to build the executed command
+- Tool `isError` results are recorded; the loop may continue until a valid report or max steps
+- Failure to `listTools` fails the run cleanly
 
-## Why SSE for run activity
+## SSE flow
 
-The UI needs a one-way stream of investigation progress (`run_started`, tool calls, completion/failure). **Server-Sent Events** fit that shape:
+```mermaid
+sequenceDiagram
+  participant UI as EventSource
+  participant Route as GET /events
+  participant Store as InMemoryRunStore
+  participant Map as mapAgentEventToStreamType
 
-- Native browser `EventSource` / fetch streaming over plain HTTP
-- Simple framing (`event`, `data`) without a second protocol stack
-- Easy disconnect handling on request close
-- Enough for a single-user local MVP
+  UI->>Route: subscribe
+  Route->>Store: listEvents + subscribe
+  Store-->>UI: replay buffered events
 
-Alternatives rejected for this MVP:
+  Note over Map: AgentEvent to StreamEventType
+  Map-->>Store: step_started / tool_call_*
+  Store-->>UI: live SSE frames
 
-- **WebSockets** — bidirectional complexity we do not need for agent→UI progress
-- **Redis / brokers** — infrastructure overhead for in-process runs
+  alt success
+    Store-->>UI: run_completed { finalReport }
+  else failure
+    Store-->>UI: run_failed { error }
+  end
+  Route-->>UI: close after terminal event
+```
 
-SSE is not a durable multi-subscriber bus; events live in the API process memory for the lifetime of that run.
+### Stream event names
+
+| SSE `event` | Source |
+|-------------|--------|
+| `run_started` | Store on run create (`{ task }`) |
+| `step_started` | Agent `step_start` |
+| `tool_call_started` | Agent `tool_call` |
+| `tool_call_completed` | Agent `tool_result` with `isError` false |
+| `tool_call_failed` | Agent `tool_result` with `isError` true |
+| `run_completed` | Store on successful complete (`{ finalReport }`) |
+| `run_failed` | Store on failed state or executor throw (`{ error }`) |
+
+Agent events such as `status`, `step_end`, `thought`, `error`, `report`, and `done` are **not** mapped to SSE types; terminal UI state uses `run_completed` / `run_failed`.
+
+Framing: `id`, `event`, `data` (JSON with `runId`, `timestamp`, `payload`). Events are held in process memory for that run; connecting after completion replays and closes. Client disconnect unsubscribes the in-memory listener.
+
+## Repository security boundary
+
+```mermaid
+flowchart TB
+  input["Tool path argument"] --> guard["resolveRepoPath(REPO_ROOT, path)"]
+  guard -->|"inside root"| allow["read / search under real path"]
+  guard -->|"escape / invalid"| deny["PathSecurityError<br/>outside_repository / invalid_path"]
+```
+
+`resolveRepoPath` (`packages/mcp-server/src/security/path-guard.ts`):
+
+- Requires non-empty root and path; rejects null bytes
+- Resolves the repository root with `realpath` and requires a directory
+- Resolves the candidate through existing ancestors (supports not-yet-created leaf paths when ancestors stay inside the root)
+- Accepts the path only when the final location is inside the repository root
+- Rejects traversal escapes, absolute paths outside the root, and symlink targets that leave the root
+
+Additional command boundaries:
+
+- `run_tests` executes only the host `TEST_COMMAND` argv (shell metacharacters rejected at parse time)
+- `get_diff` executes only the fixed git argv above
+- There is no MCP `write_file` tool
+
+## Why each component exists
+
+| Component | Why it exists |
+|-----------|----------------|
+| Web dashboard | Give a local operator one page to start a task and watch investigation progress |
+| Thin API | Separate browser transport (HTTP/SSE) from agent runtime without putting reasoning in the UI |
+| In-memory run store | Track one-process run lifecycle and SSE subscribers without introducing persistence infrastructure |
+| AgentRunner | Keep the investigation loop explicit and testable (LLM + MCP ports, max steps, guardrails) |
+| Ollama adapter | Local model backend with no cloud API key in the default path |
+| MCP client | Standard tool transport; spawn the capability server as a child process |
+| MCP server | Isolate repository filesystem/shell/git capabilities behind typed tools and path security |
+| `test-repository` | Deterministic demo target with a known failing test |
+
+## Why certain components intentionally do not exist
+
+| Absent | Reason in this MVP |
+|--------|--------------------|
+| Database | Runs and events are short-lived and local; `InMemoryRunStore` is enough |
+| Redis / message broker / queue | Single API process runs the agent; no multi-worker fan-out |
+| Authentication | Local single-operator portfolio MVP |
+| WebSockets | Progress is one-way agent→UI; SSE covers that without a bidirectional protocol |
+| Agent frameworks / sub-agents | Explicit `AgentRunner` loop keeps control flow and failure modes visible |
+| Direct FS/shell/git from the agent | All repository I/O goes through MCP so path and command policy stay in one place |
+| `write_file` / mutation tools | Investigation and recommendation only; the agent must not modify the target repo |
+| Durable multi-subscriber event bus | SSE buffers live in the API process for the lifetime of one run |
+
+## Runtime wiring (env)
+
+| Variable | Used by | Purpose |
+|----------|---------|---------|
+| `NEXT_PUBLIC_API_URL` | Web | API base URL (default `http://localhost:3001`) |
+| `API_PORT` | API | Listen port (default `3001`) |
+| `WEB_ORIGIN` | API CORS/SSE | Allowed browser origin (default `http://localhost:3000`) |
+| `REPO_ROOT` | MCP (via API spawn env) | Repository trust root |
+| `TEST_COMMAND` | MCP `run_tests` | Fixed trusted test argv |
+| `OLLAMA_BASE_URL` | Agent | Ollama HTTP base |
+| `OLLAMA_MODEL` | Agent | Model name |
+| `MCP_SERVER_ENTRY` | API (optional) | Override MCP server entry script |
+
+## Related docs
+
+- `docs/agent-design.md` — agent state model, status transitions, and runner sequence detail
+- `docs/workspace-layout.md` — package layout notes
+- `README.md` — setup, tools, guardrails, testing strategy, example run
