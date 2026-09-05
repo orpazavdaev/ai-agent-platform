@@ -63,7 +63,7 @@ stateDiagram-v2
 | `AgentStatus` | `idle` \| `running` \| `waiting_for_tool` \| `completed` \| `failed` |
 | `AgentStep` | One loop iteration (index, tool call ids, timestamps) |
 | `ToolCall` / `ToolResult` | Requested MCP call and recorded result |
-| `AgentEvent` | Append-only timeline (`status`, `step_start`, `tool_call`, `tool_result`, `error`, `report`, `done`, …) |
+| `AgentEvent` | Append-only timeline (`status`, `step_start`, `tool_call`, `tool_result`, `error`, `report`, `done`, …). `thought` exists as a type/`beginStep` option but the runner does not emit thoughts today. |
 | `FinalReport` | Structured completion payload |
 
 ### `AgentState` fields
@@ -147,9 +147,10 @@ Tool selection is **model-driven**, not a separate planner:
 - Those definitions are passed into each `llm.chat` call
 - The model may return zero or more `toolCalls` (`name` + `arguments`)
 - The runner does not hardcode the four MCP tool names; it executes whatever names the model requests through the MCP port
+- The MCP server still registers a fixed four-tool surface today; discovery reads that live list
 - The system prompt instructs the model to use only tools and not invent FS/shell access
 
-If the model picks a bad tool or bad args, MCP returns an error result (or the call fails); the runner records that and usually continues.
+If the model picks a bad tool or bad args, MCP returns an error result (or the call fails); the runner records that and usually continues. That is observability, not proof the model chose correctly.
 
 ## Tool execution
 
@@ -199,7 +200,7 @@ Implemented in `packages/agent/src/guardrails.ts` and enforced by `AgentRunner`:
 | Max tool result size | `32 KiB` | Truncate; mark as error/truncated preview |
 | Identical tool calls | `3` | Fail when the same name+args fingerprint repeats past the limit |
 | Clean failure | — | `status=failed`, non-empty `error`, `finalReport=null`, `error`/`done` events |
-| Cancellation | optional `signal` | Cooperative checks between steps/tool calls |
+| Cancellation | optional `signal` | Cooperative checks between steps/tool calls (library API only; no HTTP cancel route yet) |
 
 These limits exist because local models can loop, hang on tools, or dump huge outputs. They are intentional MVP bounds, not a claim of robust long-horizon autonomy.
 
@@ -209,7 +210,7 @@ When the model returns no tool calls, the runner parses JSON from the assistant 
 
 - Required strings: `summary`, `rootCause`, `testResult`, `confidence`
 - Required string arrays: `filesInspected`, `testsExecuted`, `uncertainty`, `investigated`, `identified`, `recommended`, `verified`
-- Rejects first-person claims that code was modified/fixed/written (investigation only)
+- Rejects first-person claims that code was modified/fixed/written via a simple regex heuristic (investigation only). This can miss paraphrases and is not a security boundary.
 
 Claim vocabulary expected by the system prompt:
 
@@ -247,4 +248,4 @@ The runner depends only on `LlmProvider.chat`. The implemented backend is Ollama
 - No guarantee the model finds the real root cause
 - Demo quality tracks the pulled Ollama model and local hardware
 
-Related: `docs/architecture.md` (system boundaries), `README.md` (guardrails and example report).
+Related: `docs/architecture.md` (system boundaries), `docs/decisions.md` (trade-offs), `README.md` (setup and illustrative example report).

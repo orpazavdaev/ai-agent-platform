@@ -1,8 +1,45 @@
 # Decisions
 
-Architecture and product decisions that are already reflected in the CodePilot implementation and docs. Each entry records what exists today—not speculative future options.
+Architecture and product decisions that are already reflected in the CodePilot implementation. Each entry records what exists today—not speculative future options.
 
-Sources: `README.md`, `docs/architecture.md`, `docs/agent-design.md`, and the corresponding packages under `apps/` and `packages/`.
+Sources: current packages under `apps/` and `packages/`, plus the companion docs that describe them (`docs/architecture.md`, `docs/agent-design.md`).
+
+---
+
+## Decision: Split UI, API, agent, and MCP into separate packages
+
+### Context
+
+A browser UI, HTTP transport, LLM tool loop, and repository capabilities have different failure modes and trust boundaries.
+
+### Decision
+
+Keep four layers:
+
+- `apps/web` — UI only
+- `apps/api` — HTTP/SSE + in-memory runs
+- `packages/agent` — runner, state, LLM, MCP client
+- `packages/mcp-server` — repository tools + path/command policy
+
+### Alternatives
+
+- Monolith process module with shared imports everywhere
+- Put MCP tools inside the agent package
+- Put agent reasoning in Next.js route handlers
+
+### Why
+
+Separation of concerns keeps prompts/reasoning out of the UI and MCP server, and keeps repository I/O out of the API/UI. It also makes package tests target one boundary at a time.
+
+### Trade-offs
+
+- More packages and wiring (`REPO_ROOT`, spawn paths, CORS)
+- Local demo requires running API and web separately
+- Cross-cutting changes touch multiple package boundaries
+
+### When I Would Change This
+
+If the project shrank to a single CLI prototype with no UI/API, or if a different deployment unit forced a combined binary with the same logical boundaries preserved internally.
 
 ---
 
@@ -23,17 +60,18 @@ Expose repository capabilities through an MCP server (`packages/mcp-server`) and
 
 ### Why
 
-MCP gives a typed tool boundary between reasoning and repository I/O. Path security and command policy live in the MCP server. The agent discovers tools dynamically instead of hardcoding repository APIs into the loop. This matches the project split: agent reasons; MCP server only provides capabilities.
+MCP gives a capability boundary between reasoning and repository I/O, with schema-validated tool inputs on the server. Path security and command policy live in the MCP server. The agent discovers the live tool list instead of hardcoding repository APIs into the loop. This matches the project split: the agent loop selects and interprets tool use; the MCP server only provides capabilities.
 
 ### Trade-offs
 
 - Extra process and protocol overhead versus in-process helpers
-- Tool surface is limited to what the MCP server registers
+- Tool surface is limited to what the MCP server registers (four tools today)
 - Debugging spans agent + MCP child process
+- “Dynamic discovery” still depends on a fixed server registration in this MVP
 
 ### When I Would Change This
 
-If the product dropped MCP as a portfolio/demo constraint and needed only in-process tools with no separate capability server—or if a different host protocol became the required integration surface.
+If the product dropped MCP as a constraint and needed only in-process tools with no separate capability server—or if a different host protocol became the required integration surface.
 
 ---
 
@@ -116,7 +154,7 @@ Implement `AgentRunner` directly against small ports (`LlmProvider`, `AgentMcpPo
 
 ### Why
 
-An explicit runner keeps the tool-calling loop, guardrails, and clean failure behavior readable in one place. Framework abstractions would hide control flow that this portfolio MVP is meant to demonstrate.
+An explicit runner keeps the tool-calling loop, guardrails, and clean failure behavior readable in one place. Framework abstractions would hide control flow that this project is meant to demonstrate.
 
 ### Trade-offs
 
@@ -147,7 +185,7 @@ Implement `OllamaProvider` behind `LlmProvider`, configured with `OLLAMA_BASE_UR
 
 ### Why
 
-Ollama runs on the developer machine over a simple HTTP API (`/api/chat`), which fits a clone-and-try portfolio MVP. No paid cloud API key is required in the default path. The small `LlmProvider` interface still allows swapping backends later.
+Ollama runs on the developer machine over a simple HTTP API (`/api/chat`), which fits a clone-and-try local MVP. No paid cloud API key is required in the default path. The small `LlmProvider` interface still allows swapping backends later.
 
 ### Trade-offs
 
@@ -313,7 +351,73 @@ An agent that can invent shell strings can turn “run the tests” into arbitra
 - Cannot run ad-hoc commands the model invents
 - `TEST_COMMAND` must be configured correctly for the target repo
 - Some legitimate workflows need a config change instead of a prompt change
+- Safety still depends on the operator: a dangerous `TEST_COMMAND` remains dangerous
+- On Windows, `.cmd`/`.bat` trusted binaries may use `shell: true` because Node cannot spawn them otherwise; argv stays fixed and metacharacter-checked
+- Path guards do not replace command policy
 
 ### When I Would Change This
 
 If a tightly allowlisted command palette (still not free-form shell) became necessary—and each entry remained host-configured, validated, and audited like `TEST_COMMAND` today.
+
+---
+
+## Decision: Structured `FinalReport` instead of free-form final prose
+
+### Context
+
+A multi-step investigation needs a stable UI/API contract for completion, not only chat text.
+
+### Decision
+
+Require a JSON `FinalReport` with fixed fields (`summary`, `rootCause`, files/tests fields, `confidence`, `uncertainty`, and investigated/identified/recommended/verified arrays). Validate before `completed`. Reject obvious first-person “I modified/fixed…” claims with a heuristic.
+
+### Alternatives
+
+- Accept free-form markdown as the final answer
+- Stream partial natural-language conclusions without schema
+
+### Why
+
+Structured output makes the dashboard and SSE `run_completed` payload deterministic enough to render sections. The claim vocabulary forces separation between evidence, recommendation, and verification. The no-modification heuristic supports the investigation-only product rule.
+
+### Trade-offs
+
+- Invalid JSON fails the whole run even if the model “knew” the answer in prose
+- Local models may struggle to emit valid schema consistently
+- The modification-claim regex is heuristic and incomplete
+- Schema evolution requires coordinated agent, API consumers, and UI updates
+
+### When I Would Change This
+
+If report consumers needed richer typed schemas (shared package), graded confidence enums, or human-editable report drafts before completion.
+
+---
+
+## Decision: Keep `search_code` as a simple recursive walk
+
+### Context
+
+The agent needs text search under `REPO_ROOT`.
+
+### Decision
+
+Implement `search_code` as a plain recursive filesystem walk with substring matching (skip common generated directories; cap results). Do not depend on ripgrep or an index.
+
+### Alternatives
+
+- Shell out to `rg` / `grep`
+- Embed a search index
+
+### Why
+
+Fewer native dependencies and clearer security review for an MVP: search stays inside the same path-guarded tree and Node process model as `read_file`.
+
+### Trade-offs
+
+- Slower and less featureful than ripgrep (no advanced regex engine parity, weaker large-repo performance)
+- Result quality depends on simple substring matching and caps
+- May miss or over-match compared with a dedicated code search tool
+
+### When I Would Change This
+
+If demo repos or real targets became large enough that walk latency dominated runs—and an allowlisted `rg` invocation or indexed search could stay within the same MCP tool contract and path boundary.

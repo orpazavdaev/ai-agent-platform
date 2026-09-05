@@ -1,8 +1,8 @@
 # Architecture
 
-CodePilot is a local investigation stack: a Next.js UI starts runs through a thin HTTP/SSE API; the API runs `AgentRunner` in-process; the agent reasons with Ollama and reaches the target repository only through an MCP client that spawns a stdio MCP server.
+CodePilot is a local investigation stack: a Next.js UI starts runs through a thin HTTP/SSE API; the API runs `AgentRunner` in-process; the agent calls Ollama and reaches the target repository only through an MCP client that spawns a stdio MCP server.
 
-Facts below match the current implementation in `apps/*` and `packages/*`.
+Facts below match the current implementation in `apps/*` and `packages/*`. This is a local MVP, not a production multi-tenant system.
 
 ## System architecture
 
@@ -24,7 +24,7 @@ flowchart TB
     runner --> mcpClient
   end
 
-  subgraph mcpProcess ["MCP child process"]
+  subgraph mcpProcess ["MCP child process per run"]
     mcpServer["packages/mcp-server<br/>stdio MCP server"]
   end
 
@@ -58,9 +58,10 @@ flowchart TB
 
 - Validates `{ task }` with Zod
 - Creates an in-memory run and returns `202 { runId }` immediately
-- Runs the agent in the background; maps selected agent events to SSE
-- Applies CORS for `WEB_ORIGIN` so the browser can call the API
+- Runs the agent in the background; maps selected agent events into the store for SSE
+- Applies CORS for `WEB_ORIGIN` so a browser origin can call the API (not an auth system)
 - Does **not** contain investigation reasoning or repository I/O
+- Does **not** expose a cancel/abort HTTP route (even though `AgentRunner` accepts `AbortSignal`)
 
 Default executor wiring (`createDefaultAgentExecutor`):
 
@@ -68,6 +69,8 @@ Default executor wiring (`createDefaultAgentExecutor`):
 2. Pass `REPO_ROOT` and `TEST_COMMAND` into the child env
 3. Construct `AgentRunner` with `createLlmProviderFromEnv()` and the MCP session
 4. Close the MCP session when the run finishes
+
+Each default run therefore gets its own MCP child process for the duration of that run.
 
 ### Agent (`packages/agent`)
 
@@ -80,17 +83,17 @@ Default executor wiring (`createDefaultAgentExecutor`):
 ### MCP client (`McpClientSession` in `packages/agent`)
 
 - Spawns/connects to the MCP server with `StdioClientTransport`
-- Lists tools dynamically (tool names are not hardcoded in the runner)
+- Lists tools dynamically from the live server (the runner does not hardcode tool names)
 - Forwards `tools/call` and returns results to the runner
 - Closes the session cleanly
 
 ### MCP server (`packages/mcp-server`)
 
-- Exposes repository capabilities only:
+- Registers a **fixed** set of repository capabilities today:
 
 | Tool | Input | Behavior |
 |------|-------|----------|
-| `search_code` | `{ query }` | Search under `REPO_ROOT` |
+| `search_code` | `{ query }` | Recursive walk + substring match under `REPO_ROOT` (not ripgrep) |
 | `read_file` | `{ path }` | Read a file under `REPO_ROOT` |
 | `run_tests` | `{}` | Run host-configured `TEST_COMMAND` only |
 | `get_diff` | `{}` | Run fixed `git diff --no-ext-diff --no-color HEAD` only |
@@ -98,10 +101,12 @@ Default executor wiring (`createDefaultAgentExecutor`):
 - Enforces path security for filesystem tools
 - Does **not** contain prompts, tool-selection policy, or LLM calls
 
+“Dynamic discovery” means the client reads whatever the server currently registers. It does not mean tools are generated at runtime beyond that registration.
+
 ### Repository (`REPO_ROOT`)
 
 - Trust boundary for path resolution and command cwd
-- Default demo target is `test-repository` (intentional failing pricing tests)
+- Default demo target is `test-repository` (intentional failing volume-discount tests)
 
 ## Data flow
 
@@ -117,15 +122,17 @@ sequenceDiagram
   participant Repo as REPO_ROOT
 
   UI->>API: POST /api/runs { task }
-  API->>Store: create(runId, task)
-  Store-->>API: run_started buffered
+  API->>Store: create(runId, task) + run_started
   API-->>UI: 202 { runId }
 
   UI->>API: GET /api/runs/:runId/events
-  API-->>UI: SSE run_started
+  API->>Store: replay + subscribe
+  Store-->>UI: SSE run_started
 
   API->>MCP: connect (spawn stdio)
-  MCP->>Server: initialize + tools/list
+  API->>Runner: run(task, onEvent)
+  Runner->>MCP: listTools()
+  MCP->>Server: tools/list
   Server-->>MCP: tool definitions
   MCP-->>Runner: discovered tools
 
@@ -139,17 +146,19 @@ sequenceDiagram
       Repo-->>Server: result or structured error
       Server-->>MCP: tool result
       MCP-->>Runner: ToolCallResult
-      Runner->>Store: mapped SSE tool events
-      API-->>UI: tool_call_* events
+      Runner-->>API: AgentEvent via onEvent
+      API->>Store: map + append SSE tool events
+      Store-->>UI: tool_call_* events
     end
   end
 
   alt valid FinalReport
-    Runner->>Store: complete + finalReport
-    API-->>UI: run_completed
-  else clean failure / executor error
-    Runner->>Store: fail + error
-    API-->>UI: run_failed
+    Runner-->>API: completed state
+    API->>Store: complete + run_completed finalReport
+    Store-->>UI: run_completed
+  else clean failure / executor throw
+    API->>Store: fail + run_failed error
+    Store-->>UI: run_failed
   end
 
   API->>MCP: close
@@ -161,7 +170,7 @@ On successful completion, SSE `run_completed` carries `payload.finalReport` with
 
 `summary`, `rootCause`, `filesInspected`, `testsExecuted`, `testResult`, `confidence`, `uncertainty`, `investigated`, `identified`, `recommended`, `verified`
 
-The agent must not claim it modified repository files; there is no write tool.
+The agent must not claim it modified repository files; there is no write tool. Report validation includes a heuristic check against first-person modification claims—it is an honesty check, not a security control.
 
 ## Agent → MCP Client → MCP Server flow
 
@@ -176,6 +185,7 @@ Constraints enforced by the current code:
 
 - Repository access from the agent goes through MCP only
 - Tool names come from `tools/list`, not a hardcoded allowlist in the runner
+- The server currently registers exactly four tools
 - `run_tests` and `get_diff` accept empty input schemas; model-supplied command/git argv is not used to build the executed command
 - Tool `isError` results are recorded; the loop may continue until a valid report or max steps
 - Failure to `listTools` fails the run cleanly
@@ -217,7 +227,7 @@ sequenceDiagram
 | `run_completed` | Store on successful complete (`{ finalReport }`) |
 | `run_failed` | Store on failed state or executor throw (`{ error }`) |
 
-Agent events such as `status`, `step_end`, `thought`, `error`, `report`, and `done` are **not** mapped to SSE types; terminal UI state uses `run_completed` / `run_failed`.
+Agent events such as `status`, `step_end`, `thought`, `error`, `report`, and `done` are **not** mapped to SSE types; terminal UI state uses `run_completed` / `run_failed`. The `thought` event type exists on `AgentState`, but `AgentRunner` currently calls `beginStep` without a thought payload, so thought events are unused in live runs.
 
 Framing: `id`, `event`, `data` (JSON with `runId`, `timestamp`, `payload`). Events are held in process memory for that run; connecting after completion replays and closes. Client disconnect unsubscribes the in-memory listener.
 
@@ -244,6 +254,11 @@ Additional command boundaries:
 - `get_diff` executes only the fixed git argv above
 - There is no MCP `write_file` tool
 
+Operator trust assumptions:
+
+- No API auth: network reachability implies ability to start runs
+- A misconfigured `TEST_COMMAND` or `REPO_ROOT` is still dangerous; path guards constrain file tools, not arbitrary command power
+
 ## Why each component exists
 
 | Component | Why it exists |
@@ -254,7 +269,7 @@ Additional command boundaries:
 | AgentRunner | Keep the investigation loop explicit and testable (LLM + MCP ports, max steps, guardrails) |
 | Ollama adapter | Local model backend with no cloud API key in the default path |
 | MCP client | Standard tool transport; spawn the capability server as a child process |
-| MCP server | Isolate repository filesystem/shell/git capabilities behind typed tools and path security |
+| MCP server | Isolate repository filesystem/shell/git capabilities behind schema-validated tools and path security |
 | `test-repository` | Deterministic demo target with a known failing test |
 
 ## Why certain components intentionally do not exist
@@ -263,12 +278,13 @@ Additional command boundaries:
 |--------|--------------------|
 | Database | Runs and events are short-lived and local; `InMemoryRunStore` is enough |
 | Redis / message broker / queue | Single API process runs the agent; no multi-worker fan-out |
-| Authentication | Local single-operator portfolio MVP |
+| Authentication | Local single-operator MVP |
 | WebSockets | Progress is one-way agent→UI; SSE covers that without a bidirectional protocol |
 | Agent frameworks / sub-agents | Explicit `AgentRunner` loop keeps control flow and failure modes visible |
 | Direct FS/shell/git from the agent | All repository I/O goes through MCP so path and command policy stay in one place |
 | `write_file` / mutation tools | Investigation and recommendation only; the agent must not modify the target repo |
 | Durable multi-subscriber event bus | SSE buffers live in the API process for the lifetime of one run |
+| Cancel HTTP API | Runner supports `AbortSignal`, but no product route wires it yet |
 
 ## Runtime wiring (env)
 
@@ -286,5 +302,6 @@ Additional command boundaries:
 ## Related docs
 
 - `docs/agent-design.md` — agent state model, status transitions, and runner sequence detail
+- `docs/decisions.md` — decision records and trade-offs
 - `docs/workspace-layout.md` — package layout notes
 - `README.md` — setup, tools, guardrails, testing strategy, example run
