@@ -12,6 +12,7 @@ Workspace scaffold plus:
 - Agent package MCP client (`McpClientSession`) that spawns the server over stdio and discovers tools dynamically
 - Agent in-memory state/types (`AgentState`, steps, tool calls/results, events, `FinalReport`)
 - Ollama LLM adapter behind a small `LlmProvider` interface (`OLLAMA_BASE_URL`, `OLLAMA_MODEL`)
+- `AgentRunner` loop (max 10 steps) that discovers MCP tools, calls them through MCP, and validates a final JSON report
 
 ## High-level architecture
 

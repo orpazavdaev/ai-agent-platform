@@ -52,3 +52,5 @@ export type {
   LlmToolDefinition,
   OllamaProviderOptions,
 } from "./llm/index.js";
+export { AgentRunner, validateFinalReport } from "./runner.js";
+export type { AgentMcpPort, AgentRunnerOptions } from "./runner.js";

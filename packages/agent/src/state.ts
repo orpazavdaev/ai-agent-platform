@@ -13,6 +13,12 @@ export type AgentMessage = {
   role: AgentMessageRole;
   content: string;
   toolCallId?: string;
+  toolName?: string;
+  toolCalls?: Array<{
+    id: string;
+    name: string;
+    arguments: Record<string, unknown>;
+  }>;
 };
 
 export type ToolCall = {

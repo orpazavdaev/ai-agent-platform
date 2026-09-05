@@ -1,6 +1,6 @@
 # Agent design
 
-Current scope: in-memory agent state/types, MCP client, and Ollama LLM adapter. No agent loop yet.
+Current scope: in-memory agent state/types, MCP client, Ollama LLM adapter, and `AgentRunner` loop.
 
 ## State model
 
@@ -32,7 +32,7 @@ stateDiagram-v2
 ### `AgentState` fields
 
 - `task` — investigation request
-- `messages` — conversation buffer for the future LLM loop
+- `messages` — conversation buffer for the LLM loop
 - `currentStep` — latest step index (`0` before the first step)
 - `status` — lifecycle status above
 - `steps` — step records
@@ -46,3 +46,47 @@ State lives in process memory only. Helpers in `packages/agent/src/state.ts` mut
 ## LLM adapter
 
 The agent depends on a small provider-neutral `LlmProvider` (`chat(messages, tools?)`). The only implemented backend is Ollama (`packages/agent/src/llm/ollama.ts`), configured with `OLLAMA_BASE_URL` and `OLLAMA_MODEL`. Tool definitions are forwarded when the local model supports tool calling; connection and missing-model failures map to explicit error types.
+
+## AgentRunner loop
+
+`AgentRunner` owns the investigation loop. Repository access happens only through MCP.
+
+```mermaid
+sequenceDiagram
+  participant Runner as AgentRunner
+  participant MCP as MCP Client
+  participant LLM as Ollama
+  participant Server as MCP Server
+  participant Repo as Repository
+
+  Runner->>MCP: listTools()
+  MCP->>Server: tools/list
+  Server-->>MCP: tool defs
+  MCP-->>Runner: discovered tools
+
+  loop up to maxSteps (10)
+    Runner->>LLM: chat(task, messages, tools)
+    LLM-->>Runner: assistant message
+
+    alt tool call requested
+      Runner->>Runner: emit tool_call event / update state
+      Runner->>MCP: callTool(name, args)
+      MCP->>Server: tools/call
+      Server->>Repo: capability only
+      Repo-->>Server: result
+      Server-->>MCP: tool result
+      MCP-->>Runner: ToolCallResult
+      Runner->>Runner: record result, continue
+    else final JSON report
+      Runner->>Runner: validate FinalReport
+      Runner->>Runner: setFinalReport / done
+    end
+  end
+```
+
+Constraints:
+
+- No direct filesystem, shell, or git access from the runner
+- No sub-agents, agent frameworks, database, or queue
+- Invalid final JSON or model/MCP bootstrap failures mark the run `failed`
+- Tool errors are recorded into state and the loop continues until a final report or max steps
