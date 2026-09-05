@@ -52,5 +52,24 @@ export type {
   LlmToolDefinition,
   OllamaProviderOptions,
 } from "./llm/index.js";
-export { AgentRunner, validateFinalReport } from "./runner.js";
-export type { AgentMcpPort, AgentRunnerOptions } from "./runner.js";
+export {
+  DEFAULT_MAX_IDENTICAL_TOOL_CALLS,
+  DEFAULT_MAX_TOOL_RESULT_BYTES,
+  DEFAULT_TOOL_TIMEOUT_MS,
+  RunCancelledError,
+  ToolTimeoutError,
+  countIdenticalToolCalls,
+  throwIfAborted,
+  truncateUtf8,
+  withTimeout,
+} from "./guardrails.js";
+export {
+  AgentRunner,
+  isCleanFailureState,
+  validateFinalReport,
+} from "./runner.js";
+export type {
+  AgentMcpPort,
+  AgentRunOptions,
+  AgentRunnerOptions,
+} from "./runner.js";

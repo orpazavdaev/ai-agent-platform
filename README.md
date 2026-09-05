@@ -129,6 +129,46 @@ CodePilot uses **Ollama** as the local LLM backend for the agent package.
 
 Ollama-specific code is isolated under `packages/agent/src/llm/ollama.ts`. The rest of the agent depends only on the small `LlmProvider` interface.
 
+## Reliability & Guardrails
+
+`AgentRunner` uses small in-process guardrails only. No Redis, queues, circuit breakers, distributed locks, or databases.
+
+### Maximum 10 steps
+
+- **Problem:** A confused local model can request tools forever.
+- **Solution:** Default `maxSteps` is 10. When the limit is hit without a valid `FinalReport`, the run ends in a clean `failed` state.
+- **Limitation:** Hard stops may cut off a slow but productive investigation; the limit is intentionally small for MVP demos.
+
+### Tool execution timeout
+
+- **Problem:** An MCP tool (especially `run_tests`) can hang and block the agent process.
+- **Solution:** Each tool call is wrapped in a timeout (default 30s). Timeouts become tool error results the model can observe.
+- **Limitation:** The underlying child process may keep running after the agent moves on; this is cooperative timeout around the await, not OS-level kill of MCP subprocesses.
+
+### Maximum tool result size
+
+- **Problem:** Huge stdout/search payloads can blow up conversation context and memory.
+- **Solution:** Tool result text is truncated to a byte cap (default 32 KiB) before it is stored in state/messages.
+- **Limitation:** Truncation can drop the exact evidence the model needed; the agent only sees a capped preview.
+
+### Repeated identical tool-call detection
+
+- **Problem:** Models often retry the same failing or unhelpful tool call with identical arguments.
+- **Solution:** Identical tool fingerprints (`name` + stable JSON args) are counted. Exceeding the limit (default 3) fails the run cleanly.
+- **Limitation:** Legitimate repeated reads of the same path/query are blocked too; the detector is intentionally simple and local to one run.
+
+### Clean failure state
+
+- **Problem:** Partial failures can leave callers unsure whether a report exists or the run is still active.
+- **Solution:** Failures go through `failAgent`: `status=failed`, non-empty `error`, `finalReport=null`, and `error`/`done` events.
+- **Limitation:** Clean failure does not roll back earlier tool side effects (for example tests that already ran inside MCP).
+
+### Cancellation
+
+- **Problem:** A UI/API caller may need to stop a long investigation.
+- **Solution:** `run(task, { signal })` accepts an `AbortSignal` and checks it between steps/tool calls.
+- **Limitation:** Cancellation is cooperative. In-flight MCP work is not forcibly killed; abort is detected at the next await boundary.
+
 ## Planned development phases
 
 1. Shared request/event/report schemas

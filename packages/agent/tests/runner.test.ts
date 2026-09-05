@@ -1,8 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
+import {
+  DEFAULT_MAX_IDENTICAL_TOOL_CALLS,
+  RunCancelledError,
+  ToolTimeoutError,
+  countIdenticalToolCalls,
+  throwIfAborted,
+  truncateUtf8,
+  withTimeout,
+} from "../src/guardrails.js";
 import { LlmModelError } from "../src/llm/types.js";
 import type { LlmProvider } from "../src/llm/types.js";
 import type { AgentMcpPort } from "../src/runner.js";
-import { AgentRunner } from "../src/runner.js";
+import { AgentRunner, isCleanFailureState } from "../src/runner.js";
 
 function createScriptedLlm(
   responses: Array<
@@ -80,6 +89,43 @@ const validReport = {
   conclusion: "Change comparison to >=",
   limitations: ["Did not edit files"],
 };
+
+describe("guardrail helpers", () => {
+  it("counts identical tool calls by name and arguments", () => {
+    const calls = [
+      { name: "search_code", arguments: { query: "a" } },
+      { name: "search_code", arguments: { query: "b" } },
+      { name: "search_code", arguments: { query: "a" } },
+    ];
+    expect(countIdenticalToolCalls(calls, "search_code", { query: "a" })).toBe(
+      2,
+    );
+    expect(DEFAULT_MAX_IDENTICAL_TOOL_CALLS).toBe(3);
+  });
+
+  it("truncates oversized UTF-8 payloads", () => {
+    const result = truncateUtf8("x".repeat(100), 32);
+    expect(result.truncated).toBe(true);
+    expect(Buffer.byteLength(result.text, "utf8")).toBeLessThanOrEqual(32);
+    expect(result.text).toContain("[truncated]");
+  });
+
+  it("times out slow operations", async () => {
+    await expect(
+      withTimeout(
+        new Promise(() => undefined),
+        20,
+        'Tool "search_code"',
+      ),
+    ).rejects.toBeInstanceOf(ToolTimeoutError);
+  });
+
+  it("honors abort signals", () => {
+    const controller = new AbortController();
+    controller.abort();
+    expect(() => throwIfAborted(controller.signal)).toThrow(RunCancelledError);
+  });
+});
 
 describe("AgentRunner", () => {
   it("runs a tool-call loop then finishes with a validated report", async () => {
@@ -169,7 +215,7 @@ describe("AgentRunner", () => {
     expect(state.finalReport).not.toBeNull();
   });
 
-  it("fails the run on model errors", async () => {
+  it("fails the run on model errors with a clean failure state", async () => {
     const runner = new AgentRunner({
       llm: createScriptedLlm([
         new LlmModelError('Ollama model error for "missing": not found'),
@@ -179,12 +225,11 @@ describe("AgentRunner", () => {
 
     const state = await runner.run("Investigate");
 
-    expect(state.status).toBe("failed");
+    expect(isCleanFailureState(state)).toBe(true);
     expect(state.error).toMatch(/model error/i);
-    expect(state.finalReport).toBeNull();
   });
 
-  it("stops after the max step limit", async () => {
+  it("enforces the maximum step limit", async () => {
     const runner = new AgentRunner({
       maxSteps: 3,
       llm: createScriptedLlm([
@@ -211,8 +256,130 @@ describe("AgentRunner", () => {
 
     expect(state.currentStep).toBe(3);
     expect(state.toolCalls).toHaveLength(3);
-    expect(state.status).toBe("failed");
+    expect(isCleanFailureState(state)).toBe(true);
     expect(state.error).toMatch(/maximum of 3 steps/i);
+  });
+
+  it("enforces tool execution timeout", async () => {
+    const runner = new AgentRunner({
+      toolTimeoutMs: 30,
+      llm: createScriptedLlm([
+        {
+          toolCalls: [
+            { id: "slow", name: "search_code", arguments: { query: "x" } },
+          ],
+        },
+        { content: JSON.stringify(validReport) },
+      ]),
+      mcp: createMockMcp({
+        callTool: async () =>
+          await new Promise(() => {
+            /* hang */
+          }),
+      }),
+    });
+
+    const state = await runner.run("Investigate");
+
+    expect(state.toolResults[0]?.isError).toBe(true);
+    expect(state.toolResults[0]?.content).toMatch(/timed out/i);
+    expect(state.status).toBe("completed");
+  });
+
+  it("enforces maximum tool result size", async () => {
+    const runner = new AgentRunner({
+      maxToolResultBytes: 64,
+      llm: createScriptedLlm([
+        {
+          toolCalls: [
+            { id: "big", name: "search_code", arguments: { query: "x" } },
+          ],
+        },
+        { content: JSON.stringify(validReport) },
+      ]),
+      mcp: createMockMcp({
+        callTool: async () => ({
+          isError: false,
+          content: [{ type: "text", text: "y".repeat(5_000) }],
+          structuredContent: { blob: "y".repeat(5_000) },
+        }),
+      }),
+    });
+
+    const state = await runner.run("Investigate");
+
+    expect(state.toolResults[0]?.isError).toBe(true);
+    expect(state.toolResults[0]?.content).toContain("[truncated]");
+    expect(
+      Buffer.byteLength(state.toolResults[0]!.content, "utf8"),
+    ).toBeLessThanOrEqual(64);
+    expect(state.status).toBe("completed");
+  });
+
+  it("detects repeated identical tool calls", async () => {
+    const callTool = vi.fn(async () => ({
+      isError: false,
+      content: [{ type: "text", text: "ok" }],
+      structuredContent: { ok: true },
+    }));
+
+    const runner = new AgentRunner({
+      maxIdenticalToolCalls: 2,
+      llm: createScriptedLlm([
+        {
+          toolCalls: [
+            { id: "r1", name: "search_code", arguments: { query: "same" } },
+          ],
+        },
+        {
+          toolCalls: [
+            { id: "r2", name: "search_code", arguments: { query: "same" } },
+          ],
+        },
+        {
+          toolCalls: [
+            { id: "r3", name: "search_code", arguments: { query: "same" } },
+          ],
+        },
+      ]),
+      mcp: createMockMcp({ callTool }),
+    });
+
+    const state = await runner.run("Loop");
+
+    expect(callTool).toHaveBeenCalledTimes(2);
+    expect(state.toolCalls).toHaveLength(3);
+    expect(isCleanFailureState(state)).toBe(true);
+    expect(state.error).toMatch(/repeated identical tool call/i);
+  });
+
+  it("supports cancellation via AbortSignal", async () => {
+    const controller = new AbortController();
+    const runner = new AgentRunner({
+      llm: createScriptedLlm([
+        {
+          toolCalls: [
+            { id: "c1", name: "search_code", arguments: { query: "a" } },
+          ],
+        },
+        { content: JSON.stringify(validReport) },
+      ]),
+      mcp: createMockMcp({
+        callTool: async () => {
+          controller.abort();
+          return {
+            isError: false,
+            content: [{ type: "text", text: "ok" }],
+            structuredContent: { ok: true },
+          };
+        },
+      }),
+    });
+
+    const state = await runner.run("Cancel me", { signal: controller.signal });
+
+    expect(isCleanFailureState(state)).toBe(true);
+    expect(state.error).toMatch(/cancelled/i);
     expect(state.finalReport).toBeNull();
   });
 });

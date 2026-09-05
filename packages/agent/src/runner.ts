@@ -10,6 +10,18 @@ import type {
 } from "./llm/types.js";
 import { LlmError } from "./llm/types.js";
 import {
+  DEFAULT_MAX_IDENTICAL_TOOL_CALLS,
+  DEFAULT_MAX_TOOL_RESULT_BYTES,
+  DEFAULT_TOOL_TIMEOUT_MS,
+  RunCancelledError,
+  ToolTimeoutError,
+  countIdenticalToolCalls,
+  throwIfAborted,
+  truncateUtf8,
+  withTimeout,
+} from "./guardrails.js";
+import {
+  DEFAULT_MAX_AGENT_STEPS,
   appendMessage,
   beginStep,
   createAgentState,
@@ -35,7 +47,14 @@ export type AgentRunnerOptions = {
   llm: LlmProvider;
   mcp: AgentMcpPort;
   maxSteps?: number;
+  toolTimeoutMs?: number;
+  maxToolResultBytes?: number;
+  maxIdenticalToolCalls?: number;
   onEvent?: (event: AgentEvent) => void;
+};
+
+export type AgentRunOptions = {
+  signal?: AbortSignal;
 };
 
 const SYSTEM_PROMPT = [
@@ -175,153 +194,251 @@ function parseFinalReport(
   return validateFinalReport(extractJsonObject(response.message.content), state);
 }
 
+export function isCleanFailureState(state: AgentState): boolean {
+  return (
+    state.status === "failed" &&
+    typeof state.error === "string" &&
+    state.error.trim() !== "" &&
+    state.finalReport === null &&
+    state.events.some((event) => event.type === "error") &&
+    state.events.some((event) => event.type === "done")
+  );
+}
+
 export class AgentRunner {
   constructor(private readonly options: AgentRunnerOptions) {}
 
-  async run(task: string): Promise<AgentState> {
+  async run(
+    task: string,
+    runOptions: AgentRunOptions = {},
+  ): Promise<AgentState> {
+    const maxSteps = this.options.maxSteps ?? DEFAULT_MAX_AGENT_STEPS;
+    const toolTimeoutMs =
+      this.options.toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS;
+    const maxToolResultBytes =
+      this.options.maxToolResultBytes ?? DEFAULT_MAX_TOOL_RESULT_BYTES;
+    const maxIdenticalToolCalls =
+      this.options.maxIdenticalToolCalls ?? DEFAULT_MAX_IDENTICAL_TOOL_CALLS;
+    const signal = runOptions.signal;
+
     const state = createAgentState({
       task,
-      maxSteps: this.options.maxSteps,
+      maxSteps,
     });
     let eventIndex = emitNew(state, 0, this.options.onEvent);
 
     appendMessage(state, { role: "system", content: SYSTEM_PROMPT });
     appendMessage(state, { role: "user", content: state.task });
 
-    let tools: DiscoveredTool[];
     try {
-      tools = await this.options.mcp.listTools();
-    } catch (error) {
-      failAgent(
-        state,
-        error instanceof Error
-          ? `Failed to load MCP tools: ${error.message}`
-          : "Failed to load MCP tools.",
-      );
-      emitNew(state, eventIndex, this.options.onEvent);
-      return state;
-    }
+      throwIfAborted(signal);
 
-    const llmTools = toLlmTools(tools);
-
-    while (
-      state.status !== "completed" &&
-      state.status !== "failed"
-    ) {
-      if (state.currentStep >= state.maxSteps) {
+      let tools: DiscoveredTool[];
+      try {
+        tools = await this.options.mcp.listTools();
+      } catch (error) {
         failAgent(
           state,
-          `Reached maximum of ${state.maxSteps} steps without a final report.`,
+          error instanceof Error
+            ? `Failed to load MCP tools: ${error.message}`
+            : "Failed to load MCP tools.",
         );
         emitNew(state, eventIndex, this.options.onEvent);
-        break;
+        return state;
       }
 
-      beginStep(state);
-      eventIndex = emitNew(state, eventIndex, this.options.onEvent);
+      const llmTools = toLlmTools(tools);
 
-      let response: LlmChatResponse;
-      try {
-        response = await this.options.llm.chat({
-          messages: toLlmMessages(state),
-          tools: llmTools,
-        });
-      } catch (error) {
-        const message =
-          error instanceof LlmError
-            ? error.message
-            : error instanceof Error
-              ? error.message
-              : "Model request failed.";
-        failAgent(state, message);
-        emitNew(state, eventIndex, this.options.onEvent);
-        break;
-      }
+      while (
+        state.status !== "completed" &&
+        state.status !== "failed"
+      ) {
+        throwIfAborted(signal);
 
-      const toolCalls = response.message.toolCalls ?? [];
-      if (toolCalls.length > 0) {
-        appendMessage(state, {
-          role: "assistant",
-          content: response.message.content,
-          toolCalls: toolCalls.map((call) => ({
-            id: call.id,
-            name: call.name,
-            arguments: call.arguments,
-          })),
-        });
-
-        for (const call of toolCalls) {
-          recordToolCall(state, {
-            id: call.id,
-            name: call.name,
-            arguments: call.arguments,
-          });
+        if (state.currentStep >= state.maxSteps) {
+          failAgent(
+            state,
+            `Reached maximum of ${state.maxSteps} steps without a final report.`,
+          );
           eventIndex = emitNew(state, eventIndex, this.options.onEvent);
+          break;
+        }
 
-          let toolResult: ToolCallResult;
-          try {
-            toolResult = await this.options.mcp.callTool(
+        beginStep(state);
+        eventIndex = emitNew(state, eventIndex, this.options.onEvent);
+
+        let response: LlmChatResponse;
+        try {
+          response = await this.options.llm.chat({
+            messages: toLlmMessages(state),
+            tools: llmTools,
+          });
+        } catch (error) {
+          if (error instanceof RunCancelledError) {
+            throw error;
+          }
+          const message =
+            error instanceof LlmError
+              ? error.message
+              : error instanceof Error
+                ? error.message
+                : "Model request failed.";
+          failAgent(state, message);
+          eventIndex = emitNew(state, eventIndex, this.options.onEvent);
+          break;
+        }
+
+        throwIfAborted(signal);
+
+        const toolCalls = response.message.toolCalls ?? [];
+        if (toolCalls.length > 0) {
+          appendMessage(state, {
+            role: "assistant",
+            content: response.message.content,
+            toolCalls: toolCalls.map((call) => ({
+              id: call.id,
+              name: call.name,
+              arguments: call.arguments,
+            })),
+          });
+
+          let stop = false;
+          for (const call of toolCalls) {
+            throwIfAborted(signal);
+
+            const identicalCount = countIdenticalToolCalls(
+              state.toolCalls,
               call.name,
               call.arguments,
             );
-          } catch (error) {
-            toolResult = {
-              isError: true,
-              content: [
-                {
-                  type: "text",
-                  text:
-                    error instanceof Error
-                      ? error.message
-                      : "MCP tool call failed.",
-                },
-              ],
-            };
+            if (identicalCount + 1 > maxIdenticalToolCalls) {
+              recordToolCall(state, {
+                id: call.id,
+                name: call.name,
+                arguments: call.arguments,
+              });
+              eventIndex = emitNew(state, eventIndex, this.options.onEvent);
+              failAgent(
+                state,
+                `Repeated identical tool call detected for "${call.name}" (limit ${maxIdenticalToolCalls}).`,
+              );
+              eventIndex = emitNew(state, eventIndex, this.options.onEvent);
+              stop = true;
+              break;
+            }
+
+            recordToolCall(state, {
+              id: call.id,
+              name: call.name,
+              arguments: call.arguments,
+            });
+            eventIndex = emitNew(state, eventIndex, this.options.onEvent);
+
+            let toolResult: ToolCallResult;
+            try {
+              toolResult = await withTimeout(
+                this.options.mcp.callTool(call.name, call.arguments),
+                toolTimeoutMs,
+                `Tool "${call.name}"`,
+                signal,
+              );
+            } catch (error) {
+              if (error instanceof RunCancelledError) {
+                throw error;
+              }
+              if (error instanceof ToolTimeoutError) {
+                toolResult = {
+                  isError: true,
+                  content: [{ type: "text", text: error.message }],
+                  structuredContent: {
+                    error: {
+                      code: "timeout",
+                      message: error.message,
+                    },
+                  },
+                };
+              } else {
+                toolResult = {
+                  isError: true,
+                  content: [
+                    {
+                      type: "text",
+                      text:
+                        error instanceof Error
+                          ? error.message
+                          : "MCP tool call failed.",
+                    },
+                  ],
+                };
+              }
+            }
+
+            const rawContent = stringifyToolContent(toolResult);
+            const bounded = truncateUtf8(rawContent, maxToolResultBytes);
+            const content = bounded.text;
+            const structuredContent = bounded.truncated
+              ? {
+                  truncated: true,
+                  preview: content,
+                }
+              : toolResult.structuredContent;
+
+            recordToolResult(state, {
+              toolCallId: call.id,
+              name: call.name,
+              isError: toolResult.isError || bounded.truncated,
+              content,
+              structuredContent,
+            });
+            eventIndex = emitNew(state, eventIndex, this.options.onEvent);
+
+            appendMessage(state, {
+              role: "tool",
+              content,
+              toolCallId: call.id,
+              toolName: call.name,
+            });
           }
 
-          const content = stringifyToolContent(toolResult);
-          recordToolResult(state, {
-            toolCallId: call.id,
-            name: call.name,
-            isError: toolResult.isError,
-            content,
-            structuredContent: toolResult.structuredContent,
-          });
-          eventIndex = emitNew(state, eventIndex, this.options.onEvent);
+          if (stop) {
+            break;
+          }
 
-          appendMessage(state, {
-            role: "tool",
-            content,
-            toolCallId: call.id,
-            toolName: call.name,
-          });
+          endStep(state);
+          eventIndex = emitNew(state, eventIndex, this.options.onEvent);
+          continue;
+        }
+
+        appendMessage(state, {
+          role: "assistant",
+          content: response.message.content,
+        });
+
+        const report = parseFinalReport(response, state);
+        if (!report) {
+          failAgent(
+            state,
+            "Model returned a final answer that was not a valid FinalReport JSON object.",
+          );
+          eventIndex = emitNew(state, eventIndex, this.options.onEvent);
+          break;
         }
 
         endStep(state);
         eventIndex = emitNew(state, eventIndex, this.options.onEvent);
-        continue;
-      }
-
-      appendMessage(state, {
-        role: "assistant",
-        content: response.message.content,
-      });
-
-      const report = parseFinalReport(response, state);
-      if (!report) {
-        failAgent(
-          state,
-          "Model returned a final answer that was not a valid FinalReport JSON object.",
-        );
-        emitNew(state, eventIndex, this.options.onEvent);
+        setFinalReport(state, report);
+        eventIndex = emitNew(state, eventIndex, this.options.onEvent);
         break;
       }
-
-      endStep(state);
-      eventIndex = emitNew(state, eventIndex, this.options.onEvent);
-      setFinalReport(state, report);
-      emitNew(state, eventIndex, this.options.onEvent);
-      break;
+    } catch (error) {
+      if (error instanceof RunCancelledError) {
+        if (state.status !== "failed" && state.status !== "completed") {
+          failAgent(state, error.message);
+          emitNew(state, eventIndex, this.options.onEvent);
+        }
+        return state;
+      }
+      throw error;
     }
 
     return state;

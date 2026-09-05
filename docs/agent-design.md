@@ -90,3 +90,4 @@ Constraints:
 - No sub-agents, agent frameworks, database, or queue
 - Invalid final JSON or model/MCP bootstrap failures mark the run `failed`
 - Tool errors are recorded into state and the loop continues until a final report or max steps
+- Guardrails: max 10 steps, tool timeout, tool-result size cap, repeated identical tool-call detection, clean `failed` state, optional `AbortSignal` cancellation
