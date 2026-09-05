@@ -67,7 +67,7 @@ Default executor wiring (`createDefaultAgentExecutor`):
 
 1. Connect `McpClientSession` by spawning `node packages/mcp-server/dist/main.js` (or `MCP_SERVER_ENTRY`) over stdio
 2. Pass `REPO_ROOT` and `TEST_COMMAND` into the child env
-3. Construct `AgentRunner` with `createLlmProviderFromEnv()` and the MCP session
+3. Construct `AgentRunner` with `OllamaProvider.fromEnv()` and the MCP session
 4. Close the MCP session when the run finishes
 
 Each default run therefore gets its own MCP child process for the duration of that run.
@@ -227,7 +227,7 @@ sequenceDiagram
 | `run_completed` | Store on successful complete (`{ finalReport }`) |
 | `run_failed` | Store on failed state or executor throw (`{ error }`) |
 
-Agent events such as `status`, `step_end`, `thought`, `error`, `report`, and `done` are **not** mapped to SSE types; terminal UI state uses `run_completed` / `run_failed`. The `thought` event type exists on `AgentState`, but `AgentRunner` currently calls `beginStep` without a thought payload, so thought events are unused in live runs.
+Agent events such as `status`, `step_end`, `error`, `report`, and `done` are **not** mapped to SSE types; terminal UI state uses `run_completed` / `run_failed`.
 
 Framing: `id`, `event`, `data` (JSON with `runId`, `timestamp`, `payload`). Events are held in process memory for that run; connecting after completion replays and closes. Client disconnect unsubscribes the in-memory listener.
 

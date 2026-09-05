@@ -12,7 +12,6 @@ import { LlmModelError } from "../src/llm/types.js";
 import type { LlmProvider } from "../src/llm/types.js";
 import type { AgentMcpPort } from "../src/runner.js";
 import { AgentRunner, isCleanFailureState, validateFinalReport } from "../src/runner.js";
-import { createAgentState } from "../src/state.js";
 
 function createScriptedLlm(
   responses: Array<
@@ -165,55 +164,39 @@ describe("guardrail helpers", () => {
 
 describe("validateFinalReport", () => {
   it("accepts a complete investigation report", () => {
-    const state = createAgentState({ task: "investigate" });
-    expect(validateFinalReport(validReport, state)).toEqual(validReport);
+    expect(validateFinalReport(validReport)).toEqual(validReport);
   });
 
   it("rejects reports that claim code was modified", () => {
-    const state = createAgentState({ task: "investigate" });
     expect(
-      validateFinalReport(
-        {
-          ...validReport,
-          recommended: ["I fixed the comparison operator."],
-        },
-        state,
-      ),
+      validateFinalReport({
+        ...validReport,
+        recommended: ["I fixed the comparison operator."],
+      }),
     ).toBeNull();
   });
 
   it("rejects incomplete reports", () => {
-    const state = createAgentState({ task: "investigate" });
     expect(
-      validateFinalReport(
-        {
-          summary: "incomplete",
-          rootCause: "missing other fields",
-        },
-        state,
-      ),
+      validateFinalReport({
+        summary: "incomplete",
+        rootCause: "missing other fields",
+      }),
     ).toBeNull();
   });
 
   it("rejects whitespace-only required strings and non-string list items", () => {
-    const state = createAgentState({ task: "investigate" });
     expect(
-      validateFinalReport(
-        {
-          ...validReport,
-          summary: "   ",
-        },
-        state,
-      ),
+      validateFinalReport({
+        ...validReport,
+        summary: "   ",
+      }),
     ).toBeNull();
     expect(
-      validateFinalReport(
-        {
-          ...validReport,
-          filesInspected: ["src/a.ts", 12],
-        },
-        state,
-      ),
+      validateFinalReport({
+        ...validReport,
+        filesInspected: ["src/a.ts", 12],
+      }),
     ).toBeNull();
   });
 });

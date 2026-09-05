@@ -3,6 +3,7 @@ import path from "node:path";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { PathSecurityError, resolveRepoPath } from "../security/path-guard.js";
+import { toPosixRelative } from "../text.js";
 
 export const IGNORED_DIRECTORY_NAMES = new Set([
   "node_modules",
@@ -51,10 +52,6 @@ export class SearchCodeError extends Error {
     super(message);
     this.name = "SearchCodeError";
   }
-}
-
-function toPosixRelative(repositoryRoot: string, absolutePath: string): string {
-  return path.relative(repositoryRoot, absolutePath).split(path.sep).join("/");
 }
 
 function trimSnippet(line: string): string {

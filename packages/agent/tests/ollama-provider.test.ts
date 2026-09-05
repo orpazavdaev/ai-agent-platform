@@ -4,7 +4,6 @@ import {
   LlmError,
   LlmModelError,
   OllamaProvider,
-  createLlmProviderFromEnv,
 } from "../src/llm/index.js";
 
 afterEach(() => {
@@ -195,7 +194,7 @@ describe("OllamaProvider", () => {
       }),
     );
 
-    const provider = createLlmProviderFromEnv(
+    const provider = OllamaProvider.fromEnv(
       {
         OLLAMA_BASE_URL: "http://localhost:11434",
         OLLAMA_MODEL: "phi3",

@@ -1,4 +1,3 @@
-export const agentPackageName = "@codepilot/agent";
 export {
   McpClientError,
   McpClientSession,
@@ -18,7 +17,6 @@ export {
   failAgent,
   recordToolCall,
   recordToolResult,
-  setAgentStatus,
   setFinalReport,
 } from "./state.js";
 export type {
@@ -40,7 +38,6 @@ export {
   LlmError,
   LlmModelError,
   OllamaProvider,
-  createLlmProviderFromEnv,
 } from "./llm/index.js";
 export type {
   LlmChatRequest,
@@ -58,10 +55,6 @@ export {
   DEFAULT_TOOL_TIMEOUT_MS,
   RunCancelledError,
   ToolTimeoutError,
-  countIdenticalToolCalls,
-  throwIfAborted,
-  truncateUtf8,
-  withTimeout,
 } from "./guardrails.js";
 export {
   AgentRunner,

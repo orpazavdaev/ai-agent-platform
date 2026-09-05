@@ -171,10 +171,7 @@ function claimsCodeModification(text: string): boolean {
   );
 }
 
-export function validateFinalReport(
-  value: unknown,
-  _state: AgentState,
-): FinalReport | null {
+export function validateFinalReport(value: unknown): FinalReport | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return null;
   }
@@ -231,11 +228,8 @@ export function validateFinalReport(
   };
 }
 
-function parseFinalReport(
-  response: LlmChatResponse,
-  state: AgentState,
-): FinalReport | null {
-  return validateFinalReport(extractJsonObject(response.message.content), state);
+function parseFinalReport(response: LlmChatResponse): FinalReport | null {
+  return validateFinalReport(extractJsonObject(response.message.content));
 }
 
 export function isCleanFailureState(state: AgentState): boolean {
@@ -458,7 +452,7 @@ export class AgentRunner {
           content: response.message.content,
         });
 
-        const report = parseFinalReport(response, state);
+        const report = parseFinalReport(response);
         if (!report) {
           failAgent(
             state,

@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import {
   AgentRunner,
   McpClientSession,
-  createLlmProviderFromEnv,
+  OllamaProvider,
   type AgentEvent,
 } from "@codepilot/agent";
 import { applyCors, handleCorsPreflight } from "./cors.js";
@@ -44,7 +44,7 @@ export function createDefaultAgentExecutor(): AgentExecutor {
 
       try {
         const runner = new AgentRunner({
-          llm: createLlmProviderFromEnv(),
+          llm: OllamaProvider.fromEnv(),
           mcp,
           onEvent: options?.onEvent,
         });

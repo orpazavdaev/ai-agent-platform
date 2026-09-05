@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { sendJson } from "../http.js";
 import type { RunsService } from "../runs/service.js";
 
 export const createRunBodySchema = z.object({
@@ -22,19 +23,6 @@ async function readJsonBody(req: IncomingMessage): Promise<unknown> {
   } catch {
     throw new SyntaxError("Request body must be valid JSON.");
   }
-}
-
-function sendJson(
-  res: ServerResponse,
-  statusCode: number,
-  body: unknown,
-): void {
-  const payload = JSON.stringify(body);
-  res.writeHead(statusCode, {
-    "content-type": "application/json; charset=utf-8",
-    "content-length": Buffer.byteLength(payload),
-  });
-  res.end(payload);
 }
 
 export async function handleCreateRun(

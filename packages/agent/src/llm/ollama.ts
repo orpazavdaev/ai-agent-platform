@@ -235,10 +235,3 @@ export class OllamaProvider implements LlmProvider {
     };
   }
 }
-
-export function createLlmProviderFromEnv(
-  env: NodeJS.ProcessEnv = process.env,
-  options: { fetch?: typeof fetch } = {},
-): LlmProvider {
-  return OllamaProvider.fromEnv(env, options);
-}

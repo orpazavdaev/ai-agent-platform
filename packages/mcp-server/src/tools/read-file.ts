@@ -3,6 +3,7 @@ import path from "node:path";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { PathSecurityError, resolveRepoPath } from "../security/path-guard.js";
+import { toPosixRelative } from "../text.js";
 
 export const MAX_READ_FILE_BYTES = 256 * 1024;
 
@@ -40,10 +41,6 @@ export type ReadFileErrorResult = {
     message: string;
   };
 };
-
-function toPosixRelative(repositoryRoot: string, absolutePath: string): string {
-  return path.relative(repositoryRoot, absolutePath).split(path.sep).join("/");
-}
 
 export function readRepoFile(
   repositoryRoot: string,

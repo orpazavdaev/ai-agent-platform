@@ -16,6 +16,5 @@ export {
   DEFAULT_OLLAMA_BASE_URL,
   DEFAULT_OLLAMA_MODEL,
   OllamaProvider,
-  createLlmProviderFromEnv,
 } from "./ollama.js";
 export type { OllamaProviderOptions } from "./ollama.js";

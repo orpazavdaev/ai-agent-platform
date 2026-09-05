@@ -8,7 +8,6 @@ import {
   failAgent,
   recordToolCall,
   recordToolResult,
-  setAgentStatus,
   setFinalReport,
 } from "../src/state.js";
 
@@ -39,28 +38,27 @@ describe("createAgentState", () => {
 });
 
 describe("agent state behavior", () => {
-  it("appends messages and tracks status transitions", () => {
+  it("appends messages and begins steps from idle", () => {
     const state = createAgentState({ task: "investigate" });
     appendMessage(state, { role: "user", content: "investigate" });
-    setAgentStatus(state, "running");
+    beginStep(state);
 
     expect(state.messages).toHaveLength(1);
     expect(state.status).toBe("running");
-    expect(state.events.at(-1)).toMatchObject({
-      type: "status",
-      payload: { status: "running" },
-    });
+    expect(state.currentStep).toBe(1);
+    expect(state.events.some((event) => event.type === "step_start")).toBe(
+      true,
+    );
   });
 
   it("records steps, tool calls, and tool results", () => {
     const state = createAgentState({ task: "investigate" });
-    beginStep(state, "search for discount logic");
+    beginStep(state);
 
     expect(state.currentStep).toBe(1);
     expect(state.status).toBe("running");
     expect(state.steps[0]).toMatchObject({
       index: 1,
-      thought: "search for discount logic",
     });
 
     const call = recordToolCall(state, {
@@ -124,12 +122,12 @@ describe("agent state behavior", () => {
         "Volume discount fails at exactly $100 because of a threshold comparison bug.",
       rootCause:
         "applyVolumeDiscount uses `>` instead of `>=` at the $100 threshold.",
-      filesInspected: ["src/pricing.ts", "tests/pricing.test.ts"],
+      filesInspected: ["src/apply-discount.ts", "tests/checkout.test.ts"],
       testsExecuted: ["npm test"],
       testResult: "Failed at exactly $100.00",
       confidence: "high",
       uncertainty: ["Did not patch the file"],
-      investigated: ["Read pricing source and tests", "Ran npm test"],
+      investigated: ["Read discount source and tests", "Ran npm test"],
       identified: ["Threshold comparison uses >"],
       recommended: ["Change the comparison to >="],
       verified: ["Failing test output observed"],

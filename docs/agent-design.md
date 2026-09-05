@@ -63,7 +63,7 @@ stateDiagram-v2
 | `AgentStatus` | `idle` \| `running` \| `waiting_for_tool` \| `completed` \| `failed` |
 | `AgentStep` | One loop iteration (index, tool call ids, timestamps) |
 | `ToolCall` / `ToolResult` | Requested MCP call and recorded result |
-| `AgentEvent` | Append-only timeline (`status`, `step_start`, `tool_call`, `tool_result`, `error`, `report`, `done`, …). `thought` exists as a type/`beginStep` option but the runner does not emit thoughts today. |
+| `AgentEvent` | Append-only timeline (`status`, `step_start`, `step_end`, `tool_call`, `tool_result`, `error`, `report`, `done`) |
 | `FinalReport` | Structured completion payload |
 
 ### `AgentState` fields

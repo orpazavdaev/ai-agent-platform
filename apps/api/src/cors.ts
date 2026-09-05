@@ -3,17 +3,11 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 const DEFAULT_WEB_ORIGIN = "http://localhost:3000";
 
 export function applyCors(
-  req: IncomingMessage,
+  _req: IncomingMessage,
   res: ServerResponse,
 ): void {
   const origin = process.env.WEB_ORIGIN?.trim() || DEFAULT_WEB_ORIGIN;
-  const requestOrigin = req.headers.origin;
-  const allowed =
-    requestOrigin === origin || requestOrigin === undefined
-      ? origin
-      : origin;
-
-  res.setHeader("Access-Control-Allow-Origin", allowed);
+  res.setHeader("Access-Control-Allow-Origin", origin);
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "content-type");
   res.setHeader("Access-Control-Allow-Credentials", "true");

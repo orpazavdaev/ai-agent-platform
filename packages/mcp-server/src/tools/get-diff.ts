@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
+import { boundUtf8 } from "../text.js";
 
 export const FIXED_GIT_DIFF_ARGV = [
   "git",
@@ -55,21 +56,6 @@ type CommandCapture = {
   stderr: string;
   truncated: boolean;
 };
-
-function boundUtf8(
-  value: string,
-  maxBytes: number,
-): { text: string; truncated: boolean } {
-  const buffer = Buffer.from(value, "utf8");
-  if (buffer.length <= maxBytes) {
-    return { text: value, truncated: false };
-  }
-
-  return {
-    text: buffer.subarray(0, maxBytes).toString("utf8"),
-    truncated: true,
-  };
-}
 
 function runFixedGit(
   repositoryRoot: string,

@@ -1,23 +1,11 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { sendJson } from "../http.js";
 import {
   formatSseEvent,
   isTerminalStreamEvent,
   type StreamEvent,
 } from "../runs/events.js";
 import type { RunsService } from "../runs/service.js";
-
-function sendJson(
-  res: ServerResponse,
-  statusCode: number,
-  body: unknown,
-): void {
-  const payload = JSON.stringify(body);
-  res.writeHead(statusCode, {
-    "content-type": "application/json; charset=utf-8",
-    "content-length": Buffer.byteLength(payload),
-  });
-  res.end(payload);
-}
 
 function writeSse(res: ServerResponse, event: StreamEvent): boolean {
   return res.write(formatSseEvent(event));

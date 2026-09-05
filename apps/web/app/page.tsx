@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   asFinalReport,
   startRun,
@@ -47,13 +47,10 @@ export default function DashboardPage() {
     };
   }, []);
 
-  const canStart = useMemo(() => {
-    return (
-      task.trim().length > 0 &&
-      status !== "starting" &&
-      status !== "running"
-    );
-  }, [task, status]);
+  const canStart =
+    task.trim().length > 0 &&
+    status !== "starting" &&
+    status !== "running";
 
   function resetRunView() {
     setTimeline([]);

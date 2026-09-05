@@ -39,7 +39,6 @@ export type ToolResult = {
 
 export type AgentStep = {
   index: number;
-  thought?: string;
   toolCallIds: string[];
   startedAt: string;
   finishedAt?: string;
@@ -63,7 +62,6 @@ export type AgentEventType =
   | "status"
   | "step_start"
   | "step_end"
-  | "thought"
   | "tool_call"
   | "tool_result"
   | "error"
@@ -145,21 +143,6 @@ export function createAgentState(input: {
   return state;
 }
 
-export function setAgentStatus(
-  state: AgentState,
-  status: AgentStatus,
-  error?: string,
-): AgentState {
-  state.status = status;
-  if (error !== undefined) {
-    state.error = error;
-  } else if (status !== "failed") {
-    delete state.error;
-  }
-  pushEvent(state, "status", { status, error: state.error });
-  return state;
-}
-
 export function appendMessage(
   state: AgentState,
   message: AgentMessage,
@@ -171,10 +154,7 @@ export function appendMessage(
   return state;
 }
 
-export function beginStep(
-  state: AgentState,
-  thought?: string,
-): AgentStep {
+export function beginStep(state: AgentState): AgentStep {
   if (state.currentStep >= state.maxSteps) {
     throw new AgentStateError(
       `Cannot begin step beyond maxSteps (${state.maxSteps}).`,
@@ -184,7 +164,6 @@ export function beginStep(
   state.currentStep += 1;
   const step: AgentStep = {
     index: state.currentStep,
-    thought,
     toolCallIds: [],
     startedAt: nowIso(),
   };
@@ -193,10 +172,7 @@ export function beginStep(
     state.status = "running";
     pushEvent(state, "status", { status: state.status });
   }
-  pushEvent(state, "step_start", { index: step.index, thought });
-  if (thought !== undefined) {
-    pushEvent(state, "thought", { thought });
-  }
+  pushEvent(state, "step_start", { index: step.index });
   return step;
 }
 

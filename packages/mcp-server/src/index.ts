@@ -1,4 +1,3 @@
-export const mcpServerPackageName = "@codepilot/mcp-server";
 export {
   SERVER_NAME,
   SERVER_VERSION,
@@ -6,4 +5,4 @@ export {
   resolveRepositoryRoot,
 } from "./create-server.js";
 export type { CreateServerOptions } from "./create-server.js";
-export { PathSecurityError, resolveRepoPath } from "./security/index.js";
+export { PathSecurityError, resolveRepoPath } from "./security/path-guard.js";

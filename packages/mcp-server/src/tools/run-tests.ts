@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
+import { boundUtf8 } from "../text.js";
 
 export const DEFAULT_TEST_TIMEOUT_MS = 60_000;
 export const DEFAULT_MAX_OUTPUT_BYTES = 64 * 1024;
@@ -80,21 +81,6 @@ export function resolveTrustedTestCommand(explicit?: string): string[] {
     (process.platform === "win32" ? "npm.cmd test" : "npm test");
 
   return parseTrustedTestCommand(configured);
-}
-
-function boundUtf8(
-  value: string,
-  maxBytes: number,
-): { text: string; truncated: boolean } {
-  const buffer = Buffer.from(value, "utf8");
-  if (buffer.length <= maxBytes) {
-    return { text: value, truncated: false };
-  }
-
-  return {
-    text: buffer.subarray(0, maxBytes).toString("utf8"),
-    truncated: true,
-  };
 }
 
 export async function runTests(config: RunTestsConfig): Promise<RunTestsResult> {
