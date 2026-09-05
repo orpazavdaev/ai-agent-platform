@@ -15,6 +15,7 @@ Workspace scaffold plus:
 - `AgentRunner` loop (max 10 steps) that discovers MCP tools, calls them through MCP, and validates a final JSON report
 - API `POST /api/runs` that validates input, creates an in-memory run, starts `AgentRunner`, and returns `{ runId }` immediately
 - API `GET /api/runs/:runId/events` SSE stream for run activity
+- Next.js dashboard for task input, live timeline, tool calls, and final report
 
 ## High-level architecture
 
@@ -188,6 +189,27 @@ Notes:
 - Failures emit `run_failed` (and `tool_call_failed` when a tool result is an error)
 - Client disconnect unsubscribes the in-memory listener
 - No WebSockets, Redis, or message broker
+
+## Web UI
+
+Single-page Next.js dashboard in `apps/web`.
+
+Shows:
+
+- task input and start control
+- run status
+- live SSE timeline
+- tool call list
+- final report
+- error state
+
+The browser only talks to the API (`POST /api/runs`, `GET /api/runs/:runId/events`). It does not contain agent reasoning or MCP logic.
+
+```bash
+npm run dev -w @codepilot/web
+```
+
+Set `NEXT_PUBLIC_API_URL` (default `http://localhost:3001`) and run the API separately.
 
 ## Reliability & Guardrails
 

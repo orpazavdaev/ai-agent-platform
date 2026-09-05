@@ -39,6 +39,8 @@ export function handleRunEvents(
     "content-type": "text/event-stream; charset=utf-8",
     "cache-control": "no-cache, no-transform",
     connection: "keep-alive",
+    "access-control-allow-origin":
+      process.env.WEB_ORIGIN?.trim() || "http://localhost:3000",
   });
   if (typeof res.flushHeaders === "function") {
     res.flushHeaders();

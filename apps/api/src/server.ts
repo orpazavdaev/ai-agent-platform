@@ -7,6 +7,7 @@ import {
   createLlmProviderFromEnv,
   type AgentEvent,
 } from "@codepilot/agent";
+import { applyCors, handleCorsPreflight } from "./cors.js";
 import { handleCreateRun } from "./routes/create-run.js";
 import { handleRunEvents } from "./routes/run-events.js";
 import { createRunsService, type AgentExecutor } from "./runs/service.js";
@@ -69,6 +70,11 @@ export function createApiServer(options: ApiServerOptions = {}): http.Server {
   });
 
   return http.createServer((req, res) => {
+    applyCors(req, res);
+    if (handleCorsPreflight(req, res)) {
+      return;
+    }
+
     const url = new URL(req.url ?? "/", "http://localhost");
 
     if (req.method === "POST" && url.pathname === "/api/runs") {
