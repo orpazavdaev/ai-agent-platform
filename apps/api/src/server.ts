@@ -5,8 +5,10 @@ import {
   AgentRunner,
   McpClientSession,
   createLlmProviderFromEnv,
+  type AgentEvent,
 } from "@codepilot/agent";
 import { handleCreateRun } from "./routes/create-run.js";
+import { handleRunEvents } from "./routes/run-events.js";
 import { createRunsService, type AgentExecutor } from "./runs/service.js";
 import { InMemoryRunStore } from "./runs/store.js";
 
@@ -24,7 +26,7 @@ function resolveMcpServerEntry(): string {
 
 export function createDefaultAgentExecutor(): AgentExecutor {
   return {
-    async run(task: string) {
+    async run(task: string, options?: { onEvent?: (event: AgentEvent) => void }) {
       const mcp = await McpClientSession.connect({
         command: process.execPath,
         args: [resolveMcpServerEntry()],
@@ -43,6 +45,7 @@ export function createDefaultAgentExecutor(): AgentExecutor {
         const runner = new AgentRunner({
           llm: createLlmProviderFromEnv(),
           mcp,
+          onEvent: options?.onEvent,
         });
         return await runner.run(task);
       } finally {
@@ -73,6 +76,13 @@ export function createApiServer(options: ApiServerOptions = {}): http.Server {
         res.writeHead(500, { "content-type": "application/json" });
         res.end(JSON.stringify({ error: "Internal server error." }));
       });
+      return;
+    }
+
+    const eventsMatch = url.pathname.match(/^\/api\/runs\/([^/]+)\/events$/);
+    if (req.method === "GET" && eventsMatch) {
+      const runId = decodeURIComponent(eventsMatch[1] ?? "");
+      handleRunEvents(req, res, runs, runId);
       return;
     }
 

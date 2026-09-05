@@ -14,6 +14,7 @@ Workspace scaffold plus:
 - Ollama LLM adapter behind a small `LlmProvider` interface (`OLLAMA_BASE_URL`, `OLLAMA_MODEL`)
 - `AgentRunner` loop (max 10 steps) that discovers MCP tools, calls them through MCP, and validates a final JSON report
 - API `POST /api/runs` that validates input, creates an in-memory run, starts `AgentRunner`, and returns `{ runId }` immediately
+- API `GET /api/runs/:runId/events` SSE stream for run activity
 
 ## High-level architecture
 
@@ -165,6 +166,28 @@ Notes:
 npm run build -w @codepilot/api
 API_PORT=3001 npm start -w @codepilot/api
 ```
+
+### `GET /api/runs/:runId/events`
+
+Server-Sent Events stream for one run.
+
+Event names:
+
+- `run_started`
+- `step_started`
+- `tool_call_started`
+- `tool_call_completed`
+- `tool_call_failed`
+- `run_completed`
+- `run_failed`
+
+Notes:
+
+- Correct SSE framing (`id`, `event`, `data`, blank line)
+- Connecting after completion replays buffered events and closes
+- Failures emit `run_failed` (and `tool_call_failed` when a tool result is an error)
+- Client disconnect unsubscribes the in-memory listener
+- No WebSockets, Redis, or message broker
 
 ## Reliability & Guardrails
 
