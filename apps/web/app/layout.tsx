@@ -1,16 +1,22 @@
 import type { ReactNode } from "react";
-import { IBM_Plex_Mono, IBM_Plex_Sans } from "next/font/google";
+import { Source_Sans_3, Space_Mono, Syne } from "next/font/google";
 import "./globals.css";
 
-const sans = IBM_Plex_Sans({
+const display = Syne({
   subsets: ["latin"],
-  weight: ["400", "500", "600"],
+  weight: ["600", "700", "800"],
+  variable: "--font-display",
+});
+
+const sans = Source_Sans_3({
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
   variable: "--font-sans",
 });
 
-const mono = IBM_Plex_Mono({
+const mono = Space_Mono({
   subsets: ["latin"],
-  weight: ["400", "500"],
+  weight: ["400", "700"],
   variable: "--font-mono",
 });
 
@@ -26,7 +32,11 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={`${sans.variable} ${mono.variable}`}>{children}</body>
+      <body
+        className={`${display.variable} ${sans.variable} ${mono.variable} ${sans.className}`}
+      >
+        {children}
+      </body>
     </html>
   );
 }
