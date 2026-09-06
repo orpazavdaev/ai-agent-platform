@@ -2,6 +2,14 @@
 
 CodePilot is a local software-engineering **investigation** agent. A Next.js UI starts a run through a thin HTTP/SSE API; an explicit `AgentRunner` loop calls a local Ollama model and MCP repository tools, then returns a structured final report. It does not modify repository files. It is not an autonomous coding product and is not presented as production-ready.
 
+**In two minutes:** browser → API (validate + in-memory run + SSE) → `AgentRunner` (Ollama + tool loop) → MCP client (stdio) → MCP server (path-guarded repo tools) → `REPO_ROOT`. The UI never talks to Ollama or MCP directly.
+
+**What this is not**
+
+- Not a chatbot: a single completion is not enough; the system keeps `AgentState`, executes tools, feeds results back, and stops on report/guardrail/failure
+- Not an autofix / coding agent: no `write_file`, no applied patches, recommendations only
+- Not a multi-tenant service: local single-process MVP, no auth, no durable run store
+
 ## Demo
 
 The demo target is `test-repository` (`mini-checkout`): a small TypeScript checkout app with an intentional volume-discount bug.
@@ -23,9 +31,9 @@ Live investigation quality depends on the pulled Ollama model and local hardware
 
 ## Why I Built This
 
-Software investigation is a loop: search code, read files, run tests, interpret evidence, report findings. A single LLM completion hides state, tool failures, and stopping conditions. Giving a model unrestricted shell access mixes that loop with host risk.
+Software investigation is a loop: search code, read files, run tests, interpret evidence, report findings. A chatbot-style single LLM completion hides state, tool failures, and stopping conditions. Giving a model unrestricted shell access mixes that loop with host risk.
 
-An “agent” is useful here as a **bounded tool-calling loop with explicit state**: the model proposes the next inspection step; the runner executes only MCP tools; guardrails stop runaway loops; the outcome is a validated report rather than free-form prose. The engineering focus is boundaries (package split, MCP, path security, fixed commands, SSE, in-memory runs)—not claiming the system can own or repair a codebase by itself.
+An “agent” is useful here as a **bounded tool-calling loop with explicit state**: the model proposes the next inspection step; the runner executes only MCP tools; results return into the next model turn; guardrails stop runaway loops; the outcome is a validated report rather than free-form chat. The engineering focus is boundaries (package split, MCP, path security, fixed commands, SSE, in-memory runs)—not claiming the system can own or repair a codebase by itself.
 
 ## Key Features
 
@@ -81,7 +89,7 @@ flowchart TB
 | Layer | Package | Responsibility |
 |-------|---------|----------------|
 | UI | `apps/web` | Dashboard only; HTTP/SSE client to the API |
-| API | `apps/api` | Validation, in-memory runs, SSE fan-out, starts the agent |
+| API | `apps/api` | Validation, in-memory runs, SSE stream, starts the agent |
 | Agent | `packages/agent` | LLM adapter + MCP client + runner loop + guardrails |
 | MCP | `packages/mcp-server` | Repository tools + path/command policy |
 | Target | `test-repository` | Demo codebase (not an npm workspace package) |
@@ -115,6 +123,8 @@ More detail: [`docs/agent-design.md`](docs/agent-design.md).
 - **MCP Client** (`McpClientSession` in `packages/agent`): spawns the server over stdio, lists tools, calls tools, closes the session when the run ends
 - **MCP Server** (`packages/mcp-server`): registers repository capabilities only; enforces path/command policy; no prompts
 - **Transport**: one local child process per default API run; JSON-RPC on stdin/stdout; operational logs on stderr
+
+**Why MCP here:** it keeps repository I/O behind a capability boundary. Path security and fixed-command policy live in the server; the agent only calls `listTools` / `callTool`. That is clearer and safer to review than giving the model loop direct `fs` / shell / git access.
 
 Repository access from the agent goes through MCP only.
 
@@ -266,18 +276,22 @@ Investigate why the volume discount fails at exactly $100.00
 - `search_code` is a naive walk/substring search (correctness/perf limits vs ripgrep)
 - Not production-hardened (no multi-tenant isolation, durable audit log, or SLA)
 
+## What Would Change for Production
+
+Not implemented. If this moved beyond a local demo, the first changes would be:
+
+- Authn/authz on `POST /api/runs` and event streams
+- Durable run/event storage (replace process memory)
+- Stronger isolation around `REPO_ROOT` / `TEST_COMMAND` (and never expose unrestricted shell)
+- Hosted or stronger model option behind the same `LlmProvider` interface
+- Process-level cancellation for hung tools; optional HTTP cancel wired to `AbortSignal`
+- Audit logging and multi-instance considerations (today one API process owns the run)
+
+These are deliberate non-goals of the current MVP, not missing “almost done” features.
+
 ## Future Improvements
 
-Not implemented. Possible directions only:
-
-- Durable run history (database or file-backed store)
-- Optional hosted LLM provider behind the same `LlmProvider` interface
-- Stronger tool-timeout handling (process-level cancellation)
-- HTTP cancel endpoint wired to `AbortSignal`
-- Human-approved mutation tools with review/diff gates
-- Multi-subscriber durable event log if more than one consumer is required
-- Host-configured allowlisted command palette (still not free-form shell)
-- Faster/safer code search (for example ripgrep) behind the same tool contract
+Related ideas (also not implemented): human-approved mutation tools, allowlisted command palette, ripgrep-backed search behind the same MCP tool contract, multi-subscriber durable event log.
 
 ## Local Setup
 
