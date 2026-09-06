@@ -1,0 +1,85 @@
+You are working on CodePilot Agent.
+
+This is intentionally a small portfolio MVP.
+
+Priorities:
+
+1. Correctness
+2. Simplicity
+3. Clear architecture
+4. Security
+5. Testability
+6. Documentation
+
+Do not over-engineer.
+
+Never add infrastructure unless the current requirement requires it.
+
+Do not add:
+- database
+- Redis
+- queues
+- authentication
+- Kubernetes
+- Docker orchestration
+- RAG
+- vector databases
+- multi-agent systems
+- write_file
+- GitHub API
+
+unless explicitly requested in a future task.
+
+Keep these boundaries:
+
+Frontend
+→ UI only
+
+API
+→ HTTP only
+
+Agent
+→ reasoning/orchestration
+
+MCP Client
+→ MCP communication
+
+MCP Server
+→ tools/capabilities
+
+Repository
+→ external system being investigated
+
+The Agent must never access the repository filesystem directly.
+
+The MCP server must never contain LLM reasoning.
+
+Do not create abstractions for hypothetical future requirements.
+
+Before making architectural changes, explain:
+- why the change is necessary
+- what simpler alternative exists
+- what trade-off it introduces.
+
+Documentation:
+
+README.md is public portfolio documentation.
+
+Never document unimplemented features.
+
+Document meaningful architectural decisions.
+
+When architecture changes, update the relevant documentation.
+
+Never invent performance metrics.
+
+Never call the project production-ready.
+
+Use TypeScript strict mode.
+
+Prefer explicit, readable code over clever abstractions.
+
+Keep functions small and responsibilities clear.
+---
+alwaysApply: true
+---
